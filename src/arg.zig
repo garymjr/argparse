@@ -26,6 +26,12 @@ pub const Arg = struct {
     /// Kind of argument (flag, option, positional)
     kind: ArgKind,
 
+    /// Value type for type-safe parsing (Phase 2)
+    value_type: ValueType = .string,
+
+    /// Default value (Phase 2)
+    default: ?Value = null,
+
     /// Whether this argument is required
     required: bool = false,
 };

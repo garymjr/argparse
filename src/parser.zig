@@ -3,6 +3,8 @@
 const std = @import("std");
 const Arg = @import("arg.zig").Arg;
 const ArgKind = @import("arg.zig").ArgKind;
+const ValueType = @import("arg.zig").ValueType;
+const Value = @import("arg.zig").Value;
 const Error = @import("error.zig").Error;
 
 /// Container for parsed argument values.
@@ -45,6 +47,54 @@ pub const ParsedValues = struct {
     /// Get all positional arguments.
     pub fn getPositionals(self: *const ParsedValues) []const []const u8 {
         return self.positionals.items;
+    }
+
+    /// Get an option value as an integer.
+    pub fn getIntOption(self: *const ParsedValues, name: []const u8) !i64 {
+        const str = self.options.get(name) orelse return Error.MissingRequired;
+        return std.fmt.parseInt(i64, str, 10) catch return Error.InvalidValue;
+    }
+
+    /// Get an option value as an integer, with optional default.
+    pub fn getIntOptionDefault(self: *const ParsedValues, name: []const u8, default: i64) !i64 {
+        const str = self.options.get(name) orelse return default;
+        return std.fmt.parseInt(i64, str, 10) catch return Error.InvalidValue;
+    }
+
+    /// Get an option value as a float.
+    pub fn getFloatOption(self: *const ParsedValues, name: []const u8) !f64 {
+        const str = self.options.get(name) orelse return Error.MissingRequired;
+        return std.fmt.parseFloat(f64, str) catch return Error.InvalidValue;
+    }
+
+    /// Get an option value as a float, with optional default.
+    pub fn getFloatOptionDefault(self: *const ParsedValues, name: []const u8, default: f64) !f64 {
+        const str = self.options.get(name) orelse return default;
+        return std.fmt.parseFloat(f64, str) catch return Error.InvalidValue;
+    }
+
+    /// Get an option value as a boolean.
+    pub fn getBoolOption(self: *const ParsedValues, name: []const u8) !bool {
+        const str = self.options.get(name) orelse return Error.MissingRequired;
+        if (std.mem.eql(u8, str, "true") or std.mem.eql(u8, str, "1") or std.mem.eql(u8, str, "yes") or std.mem.eql(u8, str, "on")) {
+            return true;
+        }
+        if (std.mem.eql(u8, str, "false") or std.mem.eql(u8, str, "0") or std.mem.eql(u8, str, "no") or std.mem.eql(u8, str, "off")) {
+            return false;
+        }
+        return Error.InvalidValue;
+    }
+
+    /// Get an option value as a boolean, with optional default.
+    pub fn getBoolOptionDefault(self: *const ParsedValues, name: []const u8, default: bool) !bool {
+        const str = self.options.get(name) orelse return default;
+        if (std.mem.eql(u8, str, "true") or std.mem.eql(u8, str, "1") or std.mem.eql(u8, str, "yes") or std.mem.eql(u8, str, "on")) {
+            return true;
+        }
+        if (std.mem.eql(u8, str, "false") or std.mem.eql(u8, str, "0") or std.mem.eql(u8, str, "no") or std.mem.eql(u8, str, "off")) {
+            return false;
+        }
+        return Error.InvalidValue;
     }
 };
 
@@ -112,7 +162,10 @@ pub const Parser = struct {
         // Validate required options
         for (self.args) |arg| {
             if (arg.required and arg.kind != .positional) {
-                _ = try self.parsed.getRequiredOption(arg.name);
+                // If no value provided and no default, error
+                if (self.parsed.options.get(arg.name) == null and arg.default == null) {
+                    return Error.MissingRequired;
+                }
             }
         }
     }
@@ -202,6 +255,137 @@ pub const Parser = struct {
     /// Get positional arguments (convenience method).
     pub fn getPositionals(self: *const Parser) []const []const u8 {
         return self.parsed.getPositionals();
+    }
+
+    /// Get an option value, using default if not set.
+    pub fn getOptionDefault(self: *const Parser, name: []const u8) ?[]const u8 {
+        if (self.parsed.options.get(name)) |val| {
+            return val;
+        }
+        // Look for default in arg definition
+        for (self.args) |arg| {
+            if (std.mem.eql(u8, arg.name, name)) {
+                if (arg.default) |def| {
+                    if (def == .string) return def.string;
+                }
+            }
+        }
+        return null;
+    }
+
+    /// Get an option value as integer, with default support from Arg definition.
+    pub fn getInt(self: *const Parser, name: []const u8) !i64 {
+        if (self.parsed.options.get(name)) |str| {
+            return std.fmt.parseInt(i64, str, 10) catch return Error.InvalidValue;
+        }
+        // Look for default in arg definition
+        for (self.args) |arg| {
+            if (std.mem.eql(u8, arg.name, name)) {
+                if (arg.default) |def| {
+                    if (def == .int) return def.int;
+                }
+                if (arg.required) return Error.MissingRequired;
+            }
+        }
+        return Error.MissingRequired;
+    }
+
+    /// Get an option value as float, with default support from Arg definition.
+    pub fn getFloat(self: *const Parser, name: []const u8) !f64 {
+        if (self.parsed.options.get(name)) |str| {
+            return std.fmt.parseFloat(f64, str) catch return Error.InvalidValue;
+        }
+        // Look for default in arg definition
+        for (self.args) |arg| {
+            if (std.mem.eql(u8, arg.name, name)) {
+                if (arg.default) |def| {
+                    if (def == .float) return def.float;
+                }
+                if (arg.required) return Error.MissingRequired;
+            }
+        }
+        return Error.MissingRequired;
+    }
+
+    /// Generic typed getter (Phase 2).
+    pub fn get(self: *const Parser, comptime name: []const u8, comptime T: type) !T {
+        const str_opt = self.parsed.options.get(name);
+
+        // Find arg definition to get type info and default
+        var arg_def: ?*const Arg = null;
+        for (self.args) |*arg| {
+            if (std.mem.eql(u8, arg.name, name)) {
+                arg_def = arg;
+                break;
+            }
+        }
+
+        const arg = arg_def orelse return Error.UnknownArgument;
+
+        // If value not provided, use default or error
+        if (str_opt == null) {
+            if (arg.default) |def| {
+                switch (T) {
+                    bool => {
+                        if (def == .bool) return def.bool;
+                    },
+                    []const u8 => {
+                        if (def == .string) return def.string;
+                    },
+                    i64, i32, i16, i8 => {
+                        if (def == .int) return @as(T, @intCast(def.int));
+                    },
+                    f64, f32 => {
+                        if (def == .float) return @as(f64, def.float);
+                    },
+                    else => {},
+                }
+            }
+            if (arg.required) return Error.MissingRequired;
+            return Error.MissingRequired;
+        }
+
+        const str = str_opt.?;
+
+        // Type conversion with type checking
+        switch (T) {
+            bool => {
+                if (std.mem.eql(u8, str, "true") or std.mem.eql(u8, str, "1") or std.mem.eql(u8, str, "yes") or std.mem.eql(u8, str, "on")) {
+                    return true;
+                }
+                if (std.mem.eql(u8, str, "false") or std.mem.eql(u8, str, "0") or std.mem.eql(u8, str, "no") or std.mem.eql(u8, str, "off")) {
+                    return false;
+                }
+                return Error.InvalidValue;
+            },
+            []const u8 => {
+                return str;
+            },
+            i64 => {
+                return std.fmt.parseInt(i64, str, 10) catch return Error.InvalidValue;
+            },
+            i32 => {
+                const val = std.fmt.parseInt(i64, str, 10) catch return Error.InvalidValue;
+                return std.math.cast(i32, val) orelse return Error.InvalidValue;
+            },
+            i16 => {
+                const val = std.fmt.parseInt(i64, str, 10) catch return Error.InvalidValue;
+                return std.math.cast(i16, val) orelse return Error.InvalidValue;
+            },
+            i8 => {
+                const val = std.fmt.parseInt(i64, str, 10) catch return Error.InvalidValue;
+                return std.math.cast(i8, val) orelse return Error.InvalidValue;
+            },
+            f64 => {
+                return std.fmt.parseFloat(f64, str) catch return Error.InvalidValue;
+            },
+            f32 => {
+                return std.math.cast(f32, try std.fmt.parseFloat(f64, str)) orelse return Error.InvalidValue;
+            },
+            else => {
+                @compileError("Unsupported type for get(): " ++ @typeName(T));
+            },
+        }
     }
 };
 
@@ -417,4 +601,388 @@ test "no arguments" {
     try parser.parse(&argv);
 
     try std.testing.expect(!parser.getFlag("verbose"));
+}
+
+// Phase 2 Tests: Type Conversion
+
+test "get int option valid" {
+    const args = [_]Arg{
+        .{ .name = "count", .long = "count", .kind = .option, .value_type = .int },
+    };
+
+    const argv = [_][]const u8{ "program", "--count", "42" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const count = try parser.getInt("count");
+    try std.testing.expectEqual(@as(i64, 42), count);
+}
+
+test "get int option invalid" {
+    const args = [_]Arg{
+        .{ .name = "count", .long = "count", .kind = .option, .value_type = .int },
+    };
+
+    const argv = [_][]const u8{ "program", "--count", "not-a-number" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    try std.testing.expectError(Error.InvalidValue, parser.getInt("count"));
+}
+
+test "get float option valid" {
+    const args = [_]Arg{
+        .{ .name = "ratio", .long = "ratio", .kind = .option, .value_type = .float },
+    };
+
+    const argv = [_][]const u8{ "program", "--ratio", "3.14159" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const ratio = try parser.getFloat("ratio");
+    try std.testing.expectApproxEqAbs(@as(f64, 3.14159), ratio, 0.00001);
+}
+
+test "get bool option true" {
+    const args = [_]Arg{
+        .{ .name = "enabled", .long = "enabled", .kind = .option, .value_type = .bool },
+    };
+
+    const argv = [_][]const u8{ "program", "--enabled", "true" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const enabled = try parser.parsed.getBoolOption("enabled");
+    try std.testing.expect(enabled);
+}
+
+test "get bool option false" {
+    const args = [_]Arg{
+        .{ .name = "enabled", .long = "enabled", .kind = .option, .value_type = .bool },
+    };
+
+    const argv = [_][]const u8{ "program", "--enabled", "false" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const enabled = try parser.parsed.getBoolOption("enabled");
+    try std.testing.expect(!enabled);
+}
+
+test "get bool option yes" {
+    const args = [_]Arg{
+        .{ .name = "enabled", .long = "enabled", .kind = .option, .value_type = .bool },
+    };
+
+    const argv = [_][]const u8{ "program", "--enabled", "yes" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const enabled = try parser.parsed.getBoolOption("enabled");
+    try std.testing.expect(enabled);
+}
+
+test "get bool option 1" {
+    const args = [_]Arg{
+        .{ .name = "enabled", .long = "enabled", .kind = .option, .value_type = .bool },
+    };
+
+    const argv = [_][]const u8{ "program", "--enabled", "1" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const enabled = try parser.parsed.getBoolOption("enabled");
+    try std.testing.expect(enabled);
+}
+
+test "get bool option invalid" {
+    const args = [_]Arg{
+        .{ .name = "enabled", .long = "enabled", .kind = .option, .value_type = .bool },
+    };
+
+    const argv = [_][]const u8{ "program", "--enabled", "maybe" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    try std.testing.expectError(Error.InvalidValue, parser.parsed.getBoolOption("enabled"));
+}
+
+test "get generic bool" {
+    const args = [_]Arg{
+        .{ .name = "flag", .long = "flag", .kind = .option, .value_type = .bool },
+    };
+
+    const argv = [_][]const u8{ "program", "--flag", "true" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const flag = try parser.get("flag", bool);
+    try std.testing.expect(flag);
+}
+
+test "get generic string" {
+    const args = [_]Arg{
+        .{ .name = "name", .long = "name", .kind = .option, .value_type = .string },
+    };
+
+    const argv = [_][]const u8{ "program", "--name", "ziggy" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const name = try parser.get("name", []const u8);
+    try std.testing.expectEqualStrings("ziggy", name);
+}
+
+test "get generic i64" {
+    const args = [_]Arg{
+        .{ .name = "count", .long = "count", .kind = .option, .value_type = .int },
+    };
+
+    const argv = [_][]const u8{ "program", "--count", "100" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const count = try parser.get("count", i64);
+    try std.testing.expectEqual(@as(i64, 100), count);
+}
+
+test "get generic i32" {
+    const args = [_]Arg{
+        .{ .name = "port", .long = "port", .kind = .option, .value_type = .int },
+    };
+
+    const argv = [_][]const u8{ "program", "--port", "8080" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const port = try parser.get("port", i32);
+    try std.testing.expectEqual(@as(i32, 8080), port);
+}
+
+test "get generic f64" {
+    const args = [_]Arg{
+        .{ .name = "ratio", .long = "ratio", .kind = .option, .value_type = .float },
+    };
+
+    const argv = [_][]const u8{ "program", "--ratio", "2.71828" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const ratio = try parser.get("ratio", f64);
+    try std.testing.expectApproxEqAbs(@as(f64, 2.71828), ratio, 0.00001);
+}
+
+// Phase 2 Tests: Default Values
+
+test "default int value" {
+    const args = [_]Arg{
+        .{ .name = "count", .long = "count", .kind = .option, .value_type = .int, .default = .{ .int = 10 } },
+    };
+
+    const argv = [_][]const u8{ "program" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const count = try parser.getInt("count");
+    try std.testing.expectEqual(@as(i64, 10), count);
+}
+
+test "default string value" {
+    const args = [_]Arg{
+        .{ .name = "output", .long = "output", .kind = .option, .value_type = .string, .default = .{ .string = "out.txt" } },
+    };
+
+    const argv = [_][]const u8{ "program" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const output = parser.getOptionDefault("output");
+    try std.testing.expect(output != null);
+    try std.testing.expectEqualStrings("out.txt", output.?);
+}
+
+test "default float value" {
+    const args = [_]Arg{
+        .{ .name = "threshold", .long = "threshold", .kind = .option, .value_type = .float, .default = .{ .float = 0.5 } },
+    };
+
+    const argv = [_][]const u8{ "program" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const threshold = try parser.getFloat("threshold");
+    try std.testing.expectApproxEqAbs(@as(f64, 0.5), threshold, 0.00001);
+}
+
+test "default value overridden by cli argument" {
+    const args = [_]Arg{
+        .{ .name = "count", .long = "count", .kind = .option, .value_type = .int, .default = .{ .int = 10 } },
+    };
+
+    const argv = [_][]const u8{ "program", "--count", "42" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const count = try parser.getInt("count");
+    try std.testing.expectEqual(@as(i64, 42), count);
+}
+
+test "generic get with default" {
+    const args = [_]Arg{
+        .{ .name = "port", .long = "port", .kind = .option, .value_type = .int, .default = .{ .int = 3000 } },
+    };
+
+    const argv = [_][]const u8{ "program" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const port = try parser.get("port", i32);
+    try std.testing.expectEqual(@as(i32, 3000), port);
+}
+
+test "get with default overridden" {
+    const args = [_]Arg{
+        .{ .name = "port", .long = "port", .kind = .option, .value_type = .int, .default = .{ .int = 3000 } },
+    };
+
+    const argv = [_][]const u8{ "program", "--port", "8080" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const port = try parser.get("port", i32);
+    try std.testing.expectEqual(@as(i32, 8080), port);
+}
+
+test "required with no value and no default" {
+    const args = [_]Arg{
+        .{ .name = "count", .long = "count", .kind = .option, .value_type = .int, .required = true },
+    };
+
+    const argv = [_][]const u8{ "program" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try std.testing.expectError(Error.MissingRequired, parser.parse(&argv));
+}
+
+test "required satisfied by default" {
+    const args = [_]Arg{
+        .{ .name = "count", .long = "count", .kind = .option, .value_type = .int, .required = true, .default = .{ .int = 5 } },
+    };
+
+    const argv = [_][]const u8{ "program" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const count = try parser.getInt("count");
+    try std.testing.expectEqual(@as(i64, 5), count);
+}
+
+test "parsed values get int option default" {
+    const args = [_]Arg{
+        .{ .name = "count", .long = "count", .kind = .option, .value_type = .int },
+    };
+
+    const argv = [_][]const u8{ "program" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const count = try parser.parsed.getIntOptionDefault("count", 10);
+    try std.testing.expectEqual(@as(i64, 10), count);
+}
+
+test "parsed values get float option default" {
+    const args = [_]Arg{
+        .{ .name = "ratio", .long = "ratio", .kind = .option, .value_type = .float },
+    };
+
+    const argv = [_][]const u8{ "program" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const ratio = try parser.parsed.getFloatOptionDefault("ratio", 0.5);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.5), ratio, 0.00001);
+}
+
+test "parsed values get bool option default" {
+    const args = [_]Arg{
+        .{ .name = "enabled", .long = "enabled", .kind = .option, .value_type = .bool },
+    };
+
+    const argv = [_][]const u8{ "program" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const enabled = try parser.parsed.getBoolOptionDefault("enabled", false);
+    try std.testing.expect(!enabled);
 }

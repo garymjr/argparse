@@ -243,12 +243,12 @@ try app.run(gpa, std.os.argv);
 
 **Target:** Type-safe value access
 
-- [ ] Implement ValueType enum
-- [ ] Add type conversion (string → int, string → bool)
-- [ ] Implement get[T] with type checking
-- [ ] Add default value support
-- [ ] Required argument validation
-- [ ] Tests: type conversion, defaults, required
+- [X] Implement ValueType enum
+- [X] Add type conversion (string → int, string → bool)
+- [X] Implement get[T] with type checking
+- [X] Add default value support
+- [X] Required argument validation
+- [X] Tests: type conversion, defaults, required
 
 ### Phase 3: Positional Arguments
 
