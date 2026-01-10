@@ -6,6 +6,8 @@ const ArgKind = @import("arg.zig").ArgKind;
 const ValueType = @import("arg.zig").ValueType;
 const Value = @import("arg.zig").Value;
 const Error = @import("error.zig").Error;
+const HelpConfig = @import("help.zig").HelpConfig;
+const generateHelp = @import("help.zig").generateHelp;
 
 /// Container for parsed argument values.
 pub const ParsedValues = struct {
@@ -135,7 +137,14 @@ pub const Parser = struct {
     /// Map long names to arg indices for fast lookup
     long_map: std.StringHashMap(usize),
 
+    /// Configuration for help generation (Phase 4)
+    help_config: HelpConfig,
+
     pub fn init(allocator: std.mem.Allocator, args: []const Arg) !Parser {
+        return initWithConfig(allocator, args, HelpConfig{});
+    }
+
+    pub fn initWithConfig(allocator: std.mem.Allocator, args: []const Arg, config: HelpConfig) !Parser {
         var short_map = std.AutoHashMap(u8, usize).init(allocator);
         var long_map = std.StringHashMap(usize).init(allocator);
 
@@ -154,6 +163,7 @@ pub const Parser = struct {
             .parsed = ParsedValues.init(allocator),
             .short_map = short_map,
             .long_map = long_map,
+            .help_config = config,
         };
     }
 
@@ -165,6 +175,13 @@ pub const Parser = struct {
 
     /// Parse command-line arguments.
     pub fn parse(self: *Parser, argv: []const []const u8) !void {
+        // Auto-detect --help or -h flag (Phase 4)
+        for (argv) |arg_str| {
+            if (std.mem.eql(u8, arg_str, "--help") or std.mem.eql(u8, arg_str, "-h")) {
+                return Error.ShowHelp;
+            }
+        }
+
         // Skip program name (argv[0])
         var i: usize = 1;
         while (i < argv.len) : (i += 1) {
@@ -471,6 +488,16 @@ pub const Parser = struct {
                 @compileError("Unsupported type for get(): " ++ @typeName(T));
             },
         }
+    }
+
+    /// Generate and return help text (Phase 4).
+    pub fn help(self: *const Parser) ![]const u8 {
+        return generateHelp(self.allocator, self.args, self.help_config);
+    }
+
+    /// Update help configuration (Phase 4).
+    pub fn setHelpConfig(self: *Parser, config: HelpConfig) void {
+        self.help_config = config;
     }
 };
 
@@ -1350,4 +1377,91 @@ test "missing positional at defined position" {
 
     try std.testing.expectEqualStrings("only-input.txt", parser.getPositional("input").?);
     try std.testing.expect(parser.getPositional("output") == null);
+}
+
+// Phase 4 Tests: Help Generation
+
+test "parser help method generates help" {
+    const args = [_]Arg{
+        .{ .name = "verbose", .short = 'v', .long = "verbose", .kind = .flag, .help = "Enable verbose output" },
+        .{ .name = "output", .short = 'o', .long = "output", .kind = .option, .help = "Output file" },
+    };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    const help = try parser.help();
+    defer std.testing.allocator.free(help);
+
+    try std.testing.expect(std.mem.indexOf(u8, help, "Usage:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, help, "-v, --verbose") != null);
+    try std.testing.expect(std.mem.indexOf(u8, help, "Enable verbose output") != null);
+    try std.testing.expect(std.mem.indexOf(u8, help, "-o, --output") != null);
+}
+
+test "parser with custom help config" {
+    const args = [_]Arg{
+        .{ .name = "verbose", .short = 'v', .long = "verbose", .kind = .flag, .help = "Enable verbose output" },
+    };
+
+    const config = HelpConfig{
+        .program_name = "mytool",
+        .description = "A tool for doing things",
+        .options_width = 30,
+    };
+
+    var parser = try Parser.initWithConfig(std.testing.allocator, &args, config);
+    defer parser.deinit();
+
+    const help = try parser.help();
+    defer std.testing.allocator.free(help);
+
+    try std.testing.expect(std.mem.indexOf(u8, help, "Usage: mytool") != null);
+    try std.testing.expect(std.mem.indexOf(u8, help, "A tool for doing things") != null);
+}
+
+test "parse returns ShowHelp for --help" {
+    const args = [_]Arg{
+        .{ .name = "verbose", .short = 'v', .long = "verbose", .kind = .flag },
+    };
+
+    const argv = [_][]const u8{ "program", "--help" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try std.testing.expectError(Error.ShowHelp, parser.parse(&argv));
+}
+
+test "parse returns ShowHelp for -h" {
+    const args = [_]Arg{
+        .{ .name = "verbose", .short = 'v', .long = "verbose", .kind = .flag },
+    };
+
+    const argv = [_][]const u8{ "program", "-h" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try std.testing.expectError(Error.ShowHelp, parser.parse(&argv));
+}
+
+test "setHelpConfig updates configuration" {
+    const args = [_]Arg{
+        .{ .name = "verbose", .short = 'v', .long = "verbose", .kind = .flag, .help = "Enable verbose output" },
+    };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    parser.setHelpConfig(.{
+        .program_name = "newname",
+        .description = "New description",
+    });
+
+    const help = try parser.help();
+    defer std.testing.allocator.free(help);
+
+    try std.testing.expect(std.mem.indexOf(u8, help, "Usage: newname") != null);
+    try std.testing.expect(std.mem.indexOf(u8, help, "New description") != null);
 }

@@ -11,4 +11,6 @@ pub const Error = error{
     InvalidValue,
     /// Duplicate argument provided
     DuplicateArgument,
+    /// Help requested (--help or -h)
+    ShowHelp,
 };

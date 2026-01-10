@@ -12,3 +12,8 @@ pub const Parser = @import("parser.zig").Parser;
 pub const ParsedValues = @import("parser.zig").ParsedValues;
 
 pub const Error = @import("error.zig").Error;
+
+pub const HelpConfig = @import("help.zig").HelpConfig;
+pub const helpArg = @import("help.zig").helpArg;
+pub const generateHelp = @import("help.zig").generateHelp;
+pub const generateUsage = @import("help.zig").generateUsage;

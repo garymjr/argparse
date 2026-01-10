@@ -264,11 +264,11 @@ try app.run(gpa, std.os.argv);
 
 **Target:** Auto-generated --help
 
-- [ ] Help text formatting
-- [ ] Argument description display
-- [ ] Group related arguments
-- [ ] Auto-add --help flag
-- [ ] Tests: help output
+- [X] Help text formatting
+- [X] Argument description display
+- [X] Group related arguments
+- [X] Auto-add --help flag
+- [X] Tests: help output
 
 ### Phase 5: Advanced Features
 

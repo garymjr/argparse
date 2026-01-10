@@ -13,6 +13,15 @@ pub fn main() !void {
             .help = "Enable verbose output",
         },
         .{
+            .name = "count",
+            .short = 'c',
+            .long = "count",
+            .kind = .option,
+            .value_type = .int,
+            .default = .{ .int = 10 },
+            .help = "Number of iterations (default: 10)",
+        },
+        .{
             .name = "file",
             .short = 'f',
             .long = "file",
@@ -27,9 +36,18 @@ pub fn main() !void {
             .required = true,
             .help = "Output file (required)",
         },
+        .{
+            .name = "input",
+            .kind = .positional,
+            .position = 0,
+            .help = "Input data",
+        },
     };
 
-    var parser = try argparse.Parser.init(gpa, &args);
+    var parser = try argparse.Parser.initWithConfig(gpa, &args, .{
+        .program_name = "example",
+        .description = "Demonstrates argparse library with help generation",
+    });
     defer parser.deinit();
 
     // Convert std.os.argv to the expected format
@@ -39,11 +57,22 @@ pub fn main() !void {
         try argv_slice.append(gpa, std.mem.span(arg));
     }
 
-    try parser.parse(argv_slice.items);
+    parser.parse(argv_slice.items) catch |err| {
+        if (err == argparse.Error.ShowHelp) {
+            const help = try parser.help();
+            defer gpa.free(help);
+            std.debug.print("{s}", .{help});
+            return;
+        }
+        return err;
+    };
 
     if (parser.getFlag("verbose")) {
         std.debug.print("Verbose mode enabled\n", .{});
     }
+
+    const count = try parser.getInt("count");
+    std.debug.print("Count: {d}\n", .{count});
 
     const output = try parser.getRequiredOption("output");
     std.debug.print("Output file: {s}\n", .{output});
