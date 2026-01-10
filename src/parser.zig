@@ -49,6 +49,31 @@ pub const ParsedValues = struct {
         return self.positionals.items;
     }
 
+    /// Get a positional argument by position index (Phase 3).
+    pub fn getPositional(self: *const ParsedValues, pos: usize) ?[]const u8 {
+        if (pos < self.positionals.items.len) {
+            return self.positionals.items[pos];
+        }
+        return null;
+    }
+
+    /// Get a positional argument by position index, error if not set (Phase 3).
+    pub fn getRequiredPositional(self: *const ParsedValues, pos: usize) Error![]const u8 {
+        return self.getPositional(pos) orelse error.MissingRequired;
+    }
+
+    /// Get a positional argument as integer by position (Phase 3).
+    pub fn getIntPositional(self: *const ParsedValues, pos: usize) !i64 {
+        const str = try self.getRequiredPositional(pos);
+        return std.fmt.parseInt(i64, str, 10) catch return Error.InvalidValue;
+    }
+
+    /// Get a positional argument as float by position (Phase 3).
+    pub fn getFloatPositional(self: *const ParsedValues, pos: usize) !f64 {
+        const str = try self.getRequiredPositional(pos);
+        return std.fmt.parseFloat(f64, str) catch return Error.InvalidValue;
+    }
+
     /// Get an option value as an integer.
     pub fn getIntOption(self: *const ParsedValues, name: []const u8) !i64 {
         const str = self.options.get(name) orelse return Error.MissingRequired;
@@ -168,6 +193,17 @@ pub const Parser = struct {
                 }
             }
         }
+
+        // Validate required positionals (Phase 3)
+        for (self.args) |arg| {
+            if (arg.required and arg.kind == .positional) {
+                if (arg.position) |pos| {
+                    if (pos >= self.parsed.positionals.items.len) {
+                        return Error.MissingRequired;
+                    }
+                }
+            }
+        }
     }
 
     fn parseLong(self: *Parser, arg_str: []const u8, i: *usize, argv: []const []const u8) !void {
@@ -255,6 +291,55 @@ pub const Parser = struct {
     /// Get positional arguments (convenience method).
     pub fn getPositionals(self: *const Parser) []const []const u8 {
         return self.parsed.getPositionals();
+    }
+
+    /// Get a positional argument by name (Phase 3).
+    /// Looks up the position from arg definition.
+    pub fn getPositional(self: *const Parser, name: []const u8) ?[]const u8 {
+        for (self.args) |arg| {
+            if (std.mem.eql(u8, arg.name, name)) {
+                if (arg.position) |pos| {
+                    return self.parsed.getPositional(pos);
+                }
+            }
+        }
+        return null;
+    }
+
+    /// Get a required positional argument by name (Phase 3).
+    pub fn getRequiredPositional(self: *const Parser, name: []const u8) Error![]const u8 {
+        for (self.args) |arg| {
+            if (std.mem.eql(u8, arg.name, name)) {
+                if (arg.position) |pos| {
+                    return self.parsed.getRequiredPositional(pos);
+                }
+            }
+        }
+        return Error.UnknownArgument;
+    }
+
+    /// Get a positional argument as integer by name (Phase 3).
+    pub fn getIntPositional(self: *const Parser, name: []const u8) !i64 {
+        for (self.args) |arg| {
+            if (std.mem.eql(u8, arg.name, name)) {
+                if (arg.position) |pos| {
+                    return self.parsed.getIntPositional(pos);
+                }
+            }
+        }
+        return Error.UnknownArgument;
+    }
+
+    /// Get a positional argument as float by name (Phase 3).
+    pub fn getFloatPositional(self: *const Parser, name: []const u8) !f64 {
+        for (self.args) |arg| {
+            if (std.mem.eql(u8, arg.name, name)) {
+                if (arg.position) |pos| {
+                    return self.parsed.getFloatPositional(pos);
+                }
+            }
+        }
+        return Error.UnknownArgument;
     }
 
     /// Get an option value, using default if not set.
@@ -985,4 +1070,284 @@ test "parsed values get bool option default" {
 
     const enabled = try parser.parsed.getBoolOptionDefault("enabled", false);
     try std.testing.expect(!enabled);
+}
+
+// Phase 3 Tests: Positional Arguments
+
+test "positional argument defined" {
+    const args = [_]Arg{
+        .{ .name = "input", .kind = .positional, .position = 0 },
+    };
+
+    const argv = [_][]const u8{ "program", "file.txt" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const input = parser.getPositional("input");
+    try std.testing.expect(input != null);
+    try std.testing.expectEqualStrings("file.txt", input.?);
+}
+
+test "positional argument by position index" {
+    const args = [_]Arg{
+        .{ .name = "input", .kind = .positional, .position = 0 },
+    };
+
+    const argv = [_][]const u8{ "program", "file.txt" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const input = parser.parsed.getPositional(0);
+    try std.testing.expect(input != null);
+    try std.testing.expectEqualStrings("file.txt", input.?);
+}
+
+test "multiple positional arguments" {
+    const args = [_]Arg{
+        .{ .name = "input", .kind = .positional, .position = 0 },
+        .{ .name = "output", .kind = .positional, .position = 1 },
+    };
+
+    const argv = [_][]const u8{ "program", "input.txt", "output.txt" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const input = parser.getPositional("input");
+    const output = parser.getPositional("output");
+
+    try std.testing.expect(input != null);
+    try std.testing.expect(output != null);
+    try std.testing.expectEqualStrings("input.txt", input.?);
+    try std.testing.expectEqualStrings("output.txt", output.?);
+}
+
+test "required positional provided" {
+    const args = [_]Arg{
+        .{ .name = "input", .kind = .positional, .position = 0, .required = true },
+    };
+
+    const argv = [_][]const u8{ "program", "file.txt" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const input = try parser.getRequiredPositional("input");
+    try std.testing.expectEqualStrings("file.txt", input);
+}
+
+test "required positional missing" {
+    const args = [_]Arg{
+        .{ .name = "input", .kind = .positional, .position = 0, .required = true },
+    };
+
+    const argv = [_][]const u8{ "program" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try std.testing.expectError(Error.MissingRequired, parser.parse(&argv));
+}
+
+test "positional as integer" {
+    const args = [_]Arg{
+        .{ .name = "count", .kind = .positional, .position = 0, .value_type = .int },
+    };
+
+    const argv = [_][]const u8{ "program", "42" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const count = try parser.getIntPositional("count");
+    try std.testing.expectEqual(@as(i64, 42), count);
+}
+
+test "positional as float" {
+    const args = [_]Arg{
+        .{ .name = "ratio", .kind = .positional, .position = 0, .value_type = .float },
+    };
+
+    const argv = [_][]const u8{ "program", "3.14159" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const ratio = try parser.getFloatPositional("ratio");
+    try std.testing.expectApproxEqAbs(@as(f64, 3.14159), ratio, 0.00001);
+}
+
+test "positional invalid integer" {
+    const args = [_]Arg{
+        .{ .name = "count", .kind = .positional, .position = 0, .value_type = .int },
+    };
+
+    const argv = [_][]const u8{ "program", "not-a-number" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    try std.testing.expectError(Error.InvalidValue, parser.getIntPositional("count"));
+}
+
+test "mixed flags and positionals" {
+    const args = [_]Arg{
+        .{ .name = "verbose", .short = 'v', .long = "verbose", .kind = .flag },
+        .{ .name = "input", .kind = .positional, .position = 0 },
+        .{ .name = "output", .kind = .positional, .position = 1 },
+    };
+
+    const argv = [_][]const u8{ "program", "-v", "input.txt", "output.txt" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    try std.testing.expect(parser.getFlag("verbose"));
+    try std.testing.expectEqualStrings("input.txt", parser.getPositional("input").?);
+    try std.testing.expectEqualStrings("output.txt", parser.getPositional("output").?);
+}
+
+test "mixed options and positionals" {
+    const args = [_]Arg{
+        .{ .name = "file", .short = 'f', .long = "file", .kind = .option },
+        .{ .name = "input", .kind = .positional, .position = 0 },
+    };
+
+    const argv = [_][]const u8{ "program", "--file", "config.txt", "data.txt" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    try std.testing.expectEqualStrings("config.txt", parser.getOption("file").?);
+    try std.testing.expectEqualStrings("data.txt", parser.getPositional("input").?);
+}
+
+test "flags after positionals" {
+    const args = [_]Arg{
+        .{ .name = "verbose", .short = 'v', .kind = .flag },
+        .{ .name = "input", .kind = .positional, .position = 0 },
+    };
+
+    const argv = [_][]const u8{ "program", "data.txt", "-v" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    try std.testing.expect(parser.getFlag("verbose"));
+    try std.testing.expectEqualStrings("data.txt", parser.getPositional("input").?);
+}
+
+test "options after positionals" {
+    const args = [_]Arg{
+        .{ .name = "count", .short = 'c', .long = "count", .kind = .option },
+        .{ .name = "input", .kind = .positional, .position = 0 },
+    };
+
+    const argv = [_][]const u8{ "program", "data.txt", "--count", "10" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    try std.testing.expectEqualStrings("10", parser.getOption("count").?);
+    try std.testing.expectEqualStrings("data.txt", parser.getPositional("input").?);
+}
+
+test "fully mixed: flags, options, and positionals" {
+    const args = [_]Arg{
+        .{ .name = "verbose", .short = 'v', .kind = .flag },
+        .{ .name = "output", .short = 'o', .long = "output", .kind = .option },
+        .{ .name = "input", .kind = .positional, .position = 0 },
+        .{ .name = "count", .kind = .positional, .position = 1 },
+    };
+
+    const argv = [_][]const u8{ "program", "-v", "input.txt", "5", "--output", "result.txt" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    try std.testing.expect(parser.getFlag("verbose"));
+    try std.testing.expectEqualStrings("result.txt", parser.getOption("output").?);
+    try std.testing.expectEqualStrings("input.txt", parser.getPositional("input").?);
+    try std.testing.expectEqual(@as(i64, 5), try parser.getIntPositional("count"));
+}
+
+test "unnamed positionals collected" {
+    const args = [_]Arg{
+        .{ .name = "verbose", .short = 'v', .kind = .flag },
+    };
+
+    const argv = [_][]const u8{ "program", "file1.txt", "file2.txt", "file3.txt", "-v" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const positionals = parser.getPositionals();
+    try std.testing.expectEqual(@as(usize, 3), positionals.len);
+    try std.testing.expectEqualStrings("file1.txt", positionals[0]);
+    try std.testing.expectEqualStrings("file2.txt", positionals[1]);
+    try std.testing.expectEqualStrings("file3.txt", positionals[2]);
+    try std.testing.expect(parser.getFlag("verbose"));
+}
+
+test "partial named positionals with extras" {
+    const args = [_]Arg{
+        .{ .name = "input", .kind = .positional, .position = 0 },
+    };
+
+    const argv = [_][]const u8{ "program", "main.txt", "extra1.txt", "extra2.txt" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    try std.testing.expectEqualStrings("main.txt", parser.getPositional("input").?);
+
+    const positionals = parser.getPositionals();
+    try std.testing.expectEqual(@as(usize, 3), positionals.len);
+}
+
+test "missing positional at defined position" {
+    const args = [_]Arg{
+        .{ .name = "input", .kind = .positional, .position = 0 },
+        .{ .name = "output", .kind = .positional, .position = 1 },
+    };
+
+    const argv = [_][]const u8{ "program", "only-input.txt" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    try std.testing.expectEqualStrings("only-input.txt", parser.getPositional("input").?);
+    try std.testing.expect(parser.getPositional("output") == null);
 }

@@ -254,11 +254,11 @@ try app.run(gpa, std.os.argv);
 
 **Target:** Handle positional args and mixing with flags
 
-- [ ] Positional argument type
-- [ ] Ordering logic (flags vs positionals)
-- [ ] Positional value extraction
-- [ ] Mixed parsing (flags before/after positionals)
-- [ ] Tests: positionals, mixed args
+- [X] Positional argument type
+- [X] Ordering logic (flags vs positionals)
+- [X] Positional value extraction
+- [X] Mixed parsing (flags before/after positionals)
+- [X] Tests: positionals, mixed args
 
 ### Phase 4: Help Generation
 

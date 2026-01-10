@@ -34,6 +34,10 @@ pub const Arg = struct {
 
     /// Whether this argument is required
     required: bool = false,
+
+    /// Position for positional arguments (Phase 3)
+    /// Defines the order of positionals (0-indexed)
+    position: ?usize = null,
 };
 
 /// Value type for type-safe parsing (Phase 2)
