@@ -32,6 +32,7 @@ tests/                 # Comprehensive tests
 ### Core Data Structures
 
 #### Argument Types
+
 ```zig
 pub const ArgKind = enum {
     flag,        // --verbose, -v (boolean)
@@ -79,6 +80,7 @@ pub const Value = union(ValueType) {
 ```
 
 #### Parser
+
 ```zig
 pub const Parser = struct {
     allocator: std.mem.Allocator,
@@ -93,6 +95,7 @@ pub const Parser = struct {
 ```
 
 #### Parsed Values (zero-copy)
+
 ```zig
 pub const ParsedValues = struct {
     flags: std.StringHashMap(bool),
@@ -109,6 +112,7 @@ pub const ParsedValues = struct {
 ```
 
 #### Commands (subcommands)
+
 ```zig
 pub const Command = struct {
     name: []const u8,
@@ -224,17 +228,19 @@ try app.run(gpa, std.os.argv);
 ## Implementation Phases
 
 ### Phase 1: Core Foundation (MVP)
+
 **Target:** Basic flag and option parsing
 
-- [ ] Create module structure (argparse.zig, arg.zig, parser.zig)
-- [ ] Define Arg and ArgKind types
-- [ ] Implement basic parser for flags (--flag, -f)
-- [ ] Implement option parsing (--opt=value, --opt value)
-- [ ] Add ParsedValues storage
-- [ ] Error handling basics (unknown arg, missing value)
-- [ ] Tests: simple flag/option cases
+- [X] Create module structure (argparse.zig, arg.zig, parser.zig)
+- [X] Define Arg and ArgKind types
+- [X] Implement basic parser for flags (--flag, -f)
+- [X] Implement option parsing (--opt=value, --opt value)
+- [X] Add ParsedValues storage
+- [X] Error handling basics (unknown arg, missing value)
+- [X] Tests: simple flag/option cases
 
 ### Phase 2: Value Types & Conversion
+
 **Target:** Type-safe value access
 
 - [ ] Implement ValueType enum
@@ -245,6 +251,7 @@ try app.run(gpa, std.os.argv);
 - [ ] Tests: type conversion, defaults, required
 
 ### Phase 3: Positional Arguments
+
 **Target:** Handle positional args and mixing with flags
 
 - [ ] Positional argument type
@@ -254,6 +261,7 @@ try app.run(gpa, std.os.argv);
 - [ ] Tests: positionals, mixed args
 
 ### Phase 4: Help Generation
+
 **Target:** Auto-generated --help
 
 - [ ] Help text formatting
@@ -263,6 +271,7 @@ try app.run(gpa, std.os.argv);
 - [ ] Tests: help output
 
 ### Phase 5: Advanced Features
+
 **Target:** Count args, validators, aliases
 
 - [ ] Count arguments (-vvv)
@@ -272,6 +281,7 @@ try app.run(gpa, std.os.argv);
 - [ ] Tests: counts, validators, multi-values
 
 ### Phase 6: Subcommands
+
 **Target:** Git-style subcommands
 
 - [ ] Command type
@@ -281,6 +291,7 @@ try app.run(gpa, std.os.argv);
 - [ ] Tests: basic subcommands, nesting
 
 ### Phase 7: Polish & Ergonomics
+
 **Target:** Production-ready API
 
 - [ ] Builder pattern API
@@ -291,6 +302,7 @@ try app.run(gpa, std.os.argv);
 - [ ] Performance benchmarks
 
 ### Phase 8: Examples & Documentation
+
 **Target:** Easy onboarding
 
 - [ ] Simple example
@@ -302,21 +314,25 @@ try app.run(gpa, std.os.argv);
 ## Key Design Decisions
 
 ### 1. Zero-Allocation by Default
+
 - Parse into temporary structs
 - String slices point directly to argv
 - Optional heap allocation for complex cases (subcommands, multi-values)
 
 ### 2. Comptime String Interning
+
 - Argument names checked at comptime
 - Type mismatches caught at compile time
 - Help generation partially at comptime
 
 ### 3. Error Sets
+
 - Custom error types for each failure mode
 - Clear error messages with context
 - Suggestion for typos (argumetn → argument?)
 
 ### 4. Flexible API
+
 - Both struct-based and builder APIs
 - Easy to start simple, scale up
 - No dependencies outside stdlib
@@ -324,18 +340,22 @@ try app.run(gpa, std.os.argv);
 ## Testing Strategy
 
 ### Unit Tests
+
 - Each module: 80%+ coverage
 - Edge cases: empty input, malformed args, unicode
 
 ### Integration Tests
+
 - Full parse cycles
 - Real-world CLI examples (git-style tools)
 
 ### Property Tests (fuzz)
+
 - Random argument sequences
 - Boundary conditions
 
 ### Benchmark Tests
+
 - Parse performance (should be fast!)
 - Memory usage (track allocations)
 

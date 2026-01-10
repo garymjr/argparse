@@ -1,27 +1,62 @@
 const std = @import("std");
-const argparse = @import("argparse");
+const argparse = @import("root.zig");
 
 pub fn main() !void {
-    // Prints to stderr, ignoring potential errors.
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
-    try argparse.bufferedPrint();
-}
+    const gpa = std.heap.page_allocator;
 
-test "simple test" {
-    const gpa = std.testing.allocator;
-    var list: std.ArrayList(i32) = .empty;
-    defer list.deinit(gpa); // Try commenting this out and see if zig detects the memory leak!
-    try list.append(gpa, 42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
-}
-
-test "fuzz example" {
-    const Context = struct {
-        fn testOne(context: @This(), input: []const u8) anyerror!void {
-            _ = context;
-            // Try passing `--fuzz` to `zig build test` and see if it manages to fail this test case!
-            try std.testing.expect(!std.mem.eql(u8, "canyoufindme", input));
-        }
+    const args = [_]argparse.Arg{
+        .{
+            .name = "verbose",
+            .short = 'v',
+            .long = "verbose",
+            .kind = .flag,
+            .help = "Enable verbose output",
+        },
+        .{
+            .name = "file",
+            .short = 'f',
+            .long = "file",
+            .kind = .option,
+            .help = "Input file to process",
+        },
+        .{
+            .name = "output",
+            .short = 'o',
+            .long = "output",
+            .kind = .option,
+            .required = true,
+            .help = "Output file (required)",
+        },
     };
-    try std.testing.fuzz(Context{}, Context.testOne, .{});
+
+    var parser = try argparse.Parser.init(gpa, &args);
+    defer parser.deinit();
+
+    // Convert std.os.argv to the expected format
+    var argv_slice = std.ArrayList([]const u8){};
+    defer argv_slice.deinit(gpa);
+    for (std.os.argv) |arg| {
+        try argv_slice.append(gpa, std.mem.span(arg));
+    }
+
+    try parser.parse(argv_slice.items);
+
+    if (parser.getFlag("verbose")) {
+        std.debug.print("Verbose mode enabled\n", .{});
+    }
+
+    const output = try parser.getRequiredOption("output");
+    std.debug.print("Output file: {s}\n", .{output});
+
+    if (parser.getOption("file")) |file| {
+        std.debug.print("Input file: {s}\n", .{file});
+    }
+
+    const positionals = parser.getPositionals();
+    if (positionals.len > 0) {
+        std.debug.print("Positional arguments:\n", .{});
+        for (positionals) |arg| {
+            std.debug.print("  {s}\n", .{arg});
+        }
+    }
 }
