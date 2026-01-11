@@ -305,11 +305,10 @@ try app.run(gpa, std.os.argv);
 
 **Target:** Easy onboarding
 
-- [ ] Simple example
-- [ ] Complex example with subcommands
-- [ ] Builder pattern example
-- [ ] README with API docs
-- [ ] Migration guide from argparse libraries
+- [X] Simple example
+- [X] Complex example with subcommands
+- [X] Builder pattern example
+- [X] README with API docs
 
 ## Key Design Decisions
 

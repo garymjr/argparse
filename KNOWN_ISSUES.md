@@ -2,7 +2,7 @@
 
 This file tracks issues found during development that are not part of the current implementation phase.
 
-## Unrelated to Phase 7
+## Unrelated to Phase 8
 
 No new unrelated issues identified.
 
