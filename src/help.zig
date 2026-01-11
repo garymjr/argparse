@@ -35,7 +35,7 @@ pub fn generateHelp(allocator: std.mem.Allocator, args: []const Arg, config: Hel
     // Add [OPTIONS] if there are any flags or options
     var has_options = false;
     for (args) |arg| {
-        if (arg.kind == .flag or arg.kind == .option) {
+        if (arg.kind == .flag or arg.kind == .option or arg.kind == .count) {
             has_options = true;
             break;
         }
@@ -81,7 +81,7 @@ pub fn generateUsage(allocator: std.mem.Allocator, args: []const Arg, config: He
 
     var has_options = false;
     for (args) |arg| {
-        if (arg.kind == .flag or arg.kind == .option) {
+        if (arg.kind == .flag or arg.kind == .option or arg.kind == .count) {
             has_options = true;
             break;
         }
@@ -115,7 +115,7 @@ fn displayArgs(writer: anytype, allocator: std.mem.Allocator, args: []const Arg,
     defer positionals.deinit();
 
     for (args) |*arg| {
-        if (arg.kind == .flag) {
+        if (arg.kind == .flag or arg.kind == .count) {
             try flags.append(arg);
         } else if (arg.kind == .option) {
             try options.append(arg);
@@ -158,13 +158,51 @@ fn displayArg(writer: anytype, arg: Arg, config: HelpConfig, has_prefix: bool) !
     const option_writer = fbs.writer();
 
     if (has_prefix) {
-        if (arg.short) |s| {
-            try option_writer.print("  -{c}", .{s});
-            if (arg.long) |l| {
-                try option_writer.print(", --{s}", .{l});
+        const has_short = (arg.short != null) or (arg.short_aliases.len > 0);
+        var wrote_any = false;
+
+        if (has_short) {
+            if (arg.short) |s| {
+                try option_writer.print("  -{c}", .{s});
+                wrote_any = true;
             }
-        } else if (arg.long) |l| {
-            try option_writer.print("      --{s}", .{l});
+            for (arg.short_aliases) |alias| {
+                if (!wrote_any) {
+                    try option_writer.print("  -{c}", .{alias});
+                    wrote_any = true;
+                } else {
+                    try option_writer.print(", -{c}", .{alias});
+                }
+            }
+            if (arg.long) |l| {
+                if (!wrote_any) {
+                    try option_writer.print("      --{s}", .{l});
+                    wrote_any = true;
+                } else {
+                    try option_writer.print(", --{s}", .{l});
+                }
+            }
+            for (arg.aliases) |alias| {
+                if (!wrote_any) {
+                    try option_writer.print("      --{s}", .{alias});
+                    wrote_any = true;
+                } else {
+                    try option_writer.print(", --{s}", .{alias});
+                }
+            }
+        } else {
+            if (arg.long) |l| {
+                try option_writer.print("      --{s}", .{l});
+                wrote_any = true;
+            }
+            for (arg.aliases) |alias| {
+                if (!wrote_any) {
+                    try option_writer.print("      --{s}", .{alias});
+                    wrote_any = true;
+                } else {
+                    try option_writer.print(", --{s}", .{alias});
+                }
+            }
         }
 
         // Add value placeholder for options

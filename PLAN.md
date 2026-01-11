@@ -274,11 +274,11 @@ try app.run(gpa, std.os.argv);
 
 **Target:** Count args, validators, aliases
 
-- [ ] Count arguments (-vvv)
-- [ ] Custom validators
-- [ ] Argument aliases
-- [ ] Multiple value support (--file=a --file=b)
-- [ ] Tests: counts, validators, multi-values
+- [X] Count arguments (-vvv)
+- [X] Custom validators
+- [X] Argument aliases
+- [X] Multiple value support (--file=a --file=b)
+- [X] Tests: counts, validators, multi-values
 
 ### Phase 6: Subcommands
 

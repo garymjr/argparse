@@ -13,20 +13,30 @@ const generateHelp = @import("help.zig").generateHelp;
 pub const ParsedValues = struct {
     allocator: std.mem.Allocator,
     flags: std.StringHashMap(bool),
+    counts: std.StringHashMap(usize),
     options: std.StringHashMap([]const u8),
+    multi_options: std.StringHashMap(std.ArrayList([]const u8)),
     positionals: std.ArrayList([]const u8),
 
     pub fn init(allocator: std.mem.Allocator) ParsedValues {
         return .{
             .allocator = allocator,
             .flags = std.StringHashMap(bool).init(allocator),
+            .counts = std.StringHashMap(usize).init(allocator),
             .options = std.StringHashMap([]const u8).init(allocator),
+            .multi_options = std.StringHashMap(std.ArrayList([]const u8)).init(allocator),
             .positionals = std.ArrayList([]const u8){},
         };
     }
 
     pub fn deinit(self: *ParsedValues) void {
         self.flags.deinit();
+        self.counts.deinit();
+        var iterator = self.multi_options.iterator();
+        while (iterator.next()) |entry| {
+            entry.value_ptr.deinit(self.allocator);
+        }
+        self.multi_options.deinit();
         self.options.deinit();
         self.positionals.deinit(self.allocator);
     }
@@ -36,9 +46,22 @@ pub const ParsedValues = struct {
         return self.flags.get(name) orelse false;
     }
 
+    /// Get the count for a counted flag.
+    pub fn getCount(self: *const ParsedValues, name: []const u8) usize {
+        return self.counts.get(name) orelse 0;
+    }
+
     /// Get an option value, returns null if not set.
     pub fn getOption(self: *const ParsedValues, name: []const u8) ?[]const u8 {
         return self.options.get(name);
+    }
+
+    /// Get all values for a multi-value option.
+    pub fn getOptionValues(self: *const ParsedValues, name: []const u8) ?[]const []const u8 {
+        if (self.multi_options.get(name)) |list| {
+            return list.items;
+        }
+        return null;
     }
 
     /// Get a required option value, error if not set.
@@ -150,10 +173,20 @@ pub const Parser = struct {
 
         for (args, 0..) |arg, i| {
             if (arg.short) |s| {
+                if (short_map.contains(s)) return Error.DuplicateArgument;
                 try short_map.put(s, i);
             }
+            for (arg.short_aliases) |alias| {
+                if (short_map.contains(alias)) return Error.DuplicateArgument;
+                try short_map.put(alias, i);
+            }
             if (arg.long) |l| {
+                if (long_map.contains(l)) return Error.DuplicateArgument;
                 try long_map.put(l, i);
+            }
+            for (arg.aliases) |alias| {
+                if (long_map.contains(alias)) return Error.DuplicateArgument;
+                try long_map.put(alias, i);
             }
         }
 
@@ -201,22 +234,73 @@ pub const Parser = struct {
             }
         }
 
-        // Validate required options
+        // Validate required arguments
         for (self.args) |arg| {
-            if (arg.required and arg.kind != .positional) {
-                // If no value provided and no default, error
-                if (self.parsed.options.get(arg.name) == null and arg.default == null) {
-                    return Error.MissingRequired;
-                }
+            if (!arg.required) continue;
+            switch (arg.kind) {
+                .flag => {
+                    if (!self.parsed.getFlag(arg.name)) return Error.MissingRequired;
+                },
+                .count => {
+                    if (self.parsed.getCount(arg.name) == 0) return Error.MissingRequired;
+                },
+                .option => {
+                    const has_option = self.parsed.options.contains(arg.name) or self.parsed.multi_options.contains(arg.name);
+                    if (!has_option and arg.default == null) {
+                        return Error.MissingRequired;
+                    }
+                },
+                .positional => {
+                    if (arg.position) |pos| {
+                        if (pos >= self.parsed.positionals.items.len) {
+                            return Error.MissingRequired;
+                        }
+                    }
+                },
             }
         }
 
-        // Validate required positionals (Phase 3)
+        try self.validatePositionals();
+    }
+
+    fn recordFlag(self: *Parser, arg: Arg) !void {
+        try self.parsed.flags.put(arg.name, true);
+    }
+
+    fn recordCount(self: *Parser, arg: Arg) !void {
+        const entry = try self.parsed.counts.getOrPut(arg.name);
+        if (!entry.found_existing) {
+            entry.value_ptr.* = 0;
+        }
+        entry.value_ptr.* += 1;
+    }
+
+    fn recordOption(self: *Parser, arg: Arg, value: []const u8) !void {
+        if (arg.validator) |validator| {
+            try validator(value);
+        }
+        if (arg.multiple) {
+            var entry = try self.parsed.multi_options.getOrPut(arg.name);
+            if (!entry.found_existing) {
+                entry.value_ptr.* = std.ArrayList([]const u8){};
+            }
+            try entry.value_ptr.append(self.allocator, value);
+            try self.parsed.options.put(arg.name, value);
+        } else {
+            if (self.parsed.options.contains(arg.name)) {
+                return Error.DuplicateArgument;
+            }
+            try self.parsed.options.put(arg.name, value);
+        }
+    }
+
+    fn validatePositionals(self: *Parser) !void {
         for (self.args) |arg| {
-            if (arg.required and arg.kind == .positional) {
+            if (arg.kind != .positional) continue;
+            if (arg.validator) |validator| {
                 if (arg.position) |pos| {
-                    if (pos >= self.parsed.positionals.items.len) {
-                        return Error.MissingRequired;
+                    if (pos < self.parsed.positionals.items.len) {
+                        try validator(self.parsed.positionals.items[pos]);
                     }
                 }
             }
@@ -234,22 +318,26 @@ pub const Parser = struct {
             const arg_idx = self.long_map.get(name) orelse return Error.UnknownArgument;
             const arg = self.args[arg_idx];
 
-            if (arg.kind == .flag) {
-                try self.parsed.flags.put(arg.name, true);
-            } else {
-                try self.parsed.options.put(arg.name, value);
+            switch (arg.kind) {
+                .flag => try self.recordFlag(arg),
+                .count => try self.recordCount(arg),
+                .option => try self.recordOption(arg, value),
+                .positional => return Error.UnknownArgument,
             }
         } else {
             // --name value syntax
             const arg_idx = self.long_map.get(inner) orelse return Error.UnknownArgument;
             const arg = self.args[arg_idx];
 
-            if (arg.kind == .flag) {
-                try self.parsed.flags.put(arg.name, true);
-            } else {
-                i.* += 1;
-                if (i.* >= argv.len) return Error.MissingValue;
-                try self.parsed.options.put(arg.name, argv[i.*]);
+            switch (arg.kind) {
+                .flag => try self.recordFlag(arg),
+                .count => try self.recordCount(arg),
+                .option => {
+                    i.* += 1;
+                    if (i.* >= argv.len) return Error.MissingValue;
+                    try self.recordOption(arg, argv[i.*]);
+                },
+                .positional => return Error.UnknownArgument,
             }
         }
     }
@@ -261,12 +349,15 @@ pub const Parser = struct {
             const arg_idx = self.short_map.get(short) orelse return Error.UnknownArgument;
             const arg = self.args[arg_idx];
 
-            if (arg.kind == .flag) {
-                try self.parsed.flags.put(arg.name, true);
-            } else {
-                i.* += 1;
-                if (i.* >= argv.len) return Error.MissingValue;
-                try self.parsed.options.put(arg.name, argv[i.*]);
+            switch (arg.kind) {
+                .flag => try self.recordFlag(arg),
+                .count => try self.recordCount(arg),
+                .option => {
+                    i.* += 1;
+                    if (i.* >= argv.len) return Error.MissingValue;
+                    try self.recordOption(arg, argv[i.*]);
+                },
+                .positional => return Error.UnknownArgument,
             }
         }
         // -fvalue syntax (short option with attached value)
@@ -275,17 +366,20 @@ pub const Parser = struct {
             const arg_idx = self.short_map.get(short) orelse return Error.UnknownArgument;
             const arg = self.args[arg_idx];
 
-            if (arg.kind == .flag) {
+            if (arg.kind == .option) {
+                const value = arg_str[2..];
+                try self.recordOption(arg, value);
+            } else {
                 // Multiple short flags combined: -vf
                 for (arg_str[1..]) |c| {
                     const idx = self.short_map.get(c) orelse return Error.UnknownArgument;
                     const a = self.args[idx];
-                    if (a.kind != .flag) return Error.UnknownArgument;
-                    try self.parsed.flags.put(a.name, true);
+                    switch (a.kind) {
+                        .flag => try self.recordFlag(a),
+                        .count => try self.recordCount(a),
+                        else => return Error.UnknownArgument,
+                    }
                 }
-            } else {
-                const value = arg_str[2..];
-                try self.parsed.options.put(arg.name, value);
             }
         }
     }
@@ -295,9 +389,19 @@ pub const Parser = struct {
         return self.parsed.getFlag(name);
     }
 
+    /// Get a count value (convenience method).
+    pub fn getCount(self: *const Parser, name: []const u8) usize {
+        return self.parsed.getCount(name);
+    }
+
     /// Get an option value (convenience method).
     pub fn getOption(self: *const Parser, name: []const u8) ?[]const u8 {
         return self.parsed.getOption(name);
+    }
+
+    /// Get all values for a multi-value option.
+    pub fn getOptionValues(self: *const Parser, name: []const u8) ?[]const []const u8 {
+        return self.parsed.getOptionValues(name);
     }
 
     /// Get a required option value (convenience method).
@@ -500,6 +604,11 @@ pub const Parser = struct {
         self.help_config = config;
     }
 };
+
+fn validateEven(value: []const u8) anyerror!void {
+    const number = std.fmt.parseInt(i64, value, 10) catch return Error.InvalidValue;
+    if (number % 2 != 0) return Error.InvalidValue;
+}
 
 test "parse single flag long" {
     const args = [_]Arg{
@@ -1464,4 +1573,111 @@ test "setHelpConfig updates configuration" {
 
     try std.testing.expect(std.mem.indexOf(u8, help, "Usage: newname") != null);
     try std.testing.expect(std.mem.indexOf(u8, help, "New description") != null);
+}
+
+// Phase 5 Tests: Advanced Features
+
+test "counted short flags" {
+    const args = [_]Arg{
+        .{ .name = "verbose", .short = 'v', .kind = .count },
+    };
+
+    const argv = [_][]const u8{ "program", "-vvv" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    try std.testing.expectEqual(@as(usize, 3), parser.getCount("verbose"));
+}
+
+test "counted long flags" {
+    const args = [_]Arg{
+        .{ .name = "verbose", .long = "verbose", .kind = .count },
+    };
+
+    const argv = [_][]const u8{ "program", "--verbose", "--verbose" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    try std.testing.expectEqual(@as(usize, 2), parser.getCount("verbose"));
+}
+
+test "option validator rejects value" {
+    const args = [_]Arg{
+        .{ .name = "count", .long = "count", .kind = .option, .validator = validateEven },
+    };
+
+    const argv = [_][]const u8{ "program", "--count", "3" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try std.testing.expectError(Error.InvalidValue, parser.parse(&argv));
+}
+
+test "positional validator rejects value" {
+    const args = [_]Arg{
+        .{ .name = "count", .kind = .positional, .position = 0, .validator = validateEven },
+    };
+
+    const argv = [_][]const u8{ "program", "3" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try std.testing.expectError(Error.InvalidValue, parser.parse(&argv));
+}
+
+test "parse long alias" {
+    const args = [_]Arg{
+        .{ .name = "output", .long = "output", .aliases = &.{ "out" }, .kind = .option },
+    };
+
+    const argv = [_][]const u8{ "program", "--out", "file.txt" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    try std.testing.expectEqualStrings("file.txt", parser.getOption("output").?);
+}
+
+test "parse short alias" {
+    const args = [_]Arg{
+        .{ .name = "output", .short = 'o', .short_aliases = &.{ 'O' }, .kind = .option },
+    };
+
+    const argv = [_][]const u8{ "program", "-O", "file.txt" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    try std.testing.expectEqualStrings("file.txt", parser.getOption("output").?);
+}
+
+test "multi-value option collects values" {
+    const args = [_]Arg{
+        .{ .name = "file", .long = "file", .kind = .option, .multiple = true },
+    };
+
+    const argv = [_][]const u8{ "program", "--file", "a.txt", "--file", "b.txt" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const values = parser.getOptionValues("file").?;
+    try std.testing.expectEqual(@as(usize, 2), values.len);
+    try std.testing.expectEqualStrings("a.txt", values[0]);
+    try std.testing.expectEqualStrings("b.txt", values[1]);
+    try std.testing.expectEqualStrings("b.txt", parser.getOption("file").?);
 }
