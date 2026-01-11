@@ -607,7 +607,7 @@ pub const Parser = struct {
 
 fn validateEven(value: []const u8) anyerror!void {
     const number = std.fmt.parseInt(i64, value, 10) catch return Error.InvalidValue;
-    if (number % 2 != 0) return Error.InvalidValue;
+    if (@rem(number, 2) != 0) return Error.InvalidValue;
 }
 
 test "parse single flag long" {

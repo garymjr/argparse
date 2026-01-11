@@ -47,7 +47,7 @@ pub const Arg = struct {
     required: bool = false,
 
     /// Custom value validator (Phase 5)
-    validator: ?fn ([]const u8) anyerror!void = null,
+    validator: ?*const fn ([]const u8) anyerror!void = null,
 
     /// Position for positional arguments (Phase 3)
     /// Defines the order of positionals (0-indexed)

@@ -10,6 +10,7 @@ pub const Value = @import("arg.zig").Value;
 
 pub const Parser = @import("parser.zig").Parser;
 pub const ParsedValues = @import("parser.zig").ParsedValues;
+pub const Command = @import("command.zig").Command;
 
 pub const Error = @import("error.zig").Error;
 

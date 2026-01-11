@@ -284,11 +284,11 @@ try app.run(gpa, std.os.argv);
 
 **Target:** Git-style subcommands
 
-- [ ] Command type
-- [ ] Subcommand dispatch
-- [ ] Nested subcommands
-- [ ] Per-subcommand help
-- [ ] Tests: basic subcommands, nesting
+- [X] Command type
+- [X] Subcommand dispatch
+- [X] Nested subcommands
+- [X] Per-subcommand help
+- [X] Tests: basic subcommands, nesting
 
 ### Phase 7: Polish & Ergonomics
 

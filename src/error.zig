@@ -11,6 +11,8 @@ pub const Error = error{
     InvalidValue,
     /// Duplicate argument provided
     DuplicateArgument,
+    /// Unknown subcommand provided
+    UnknownCommand,
     /// Help requested (--help or -h)
     ShowHelp,
 };
