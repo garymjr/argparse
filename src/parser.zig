@@ -6,153 +6,19 @@ const ArgKind = @import("arg.zig").ArgKind;
 const ValueType = @import("arg.zig").ValueType;
 const Value = @import("arg.zig").Value;
 const Error = @import("error.zig").Error;
+const ErrorContext = @import("error.zig").ErrorContext;
+const ErrorFormatConfig = @import("error.zig").ErrorFormatConfig;
+const formatErrorMessage = @import("error.zig").formatError;
 const HelpConfig = @import("help.zig").HelpConfig;
 const generateHelp = @import("help.zig").generateHelp;
-
-/// Container for parsed argument values.
-pub const ParsedValues = struct {
-    allocator: std.mem.Allocator,
-    flags: std.StringHashMap(bool),
-    counts: std.StringHashMap(usize),
-    options: std.StringHashMap([]const u8),
-    multi_options: std.StringHashMap(std.ArrayList([]const u8)),
-    positionals: std.ArrayList([]const u8),
-
-    pub fn init(allocator: std.mem.Allocator) ParsedValues {
-        return .{
-            .allocator = allocator,
-            .flags = std.StringHashMap(bool).init(allocator),
-            .counts = std.StringHashMap(usize).init(allocator),
-            .options = std.StringHashMap([]const u8).init(allocator),
-            .multi_options = std.StringHashMap(std.ArrayList([]const u8)).init(allocator),
-            .positionals = std.ArrayList([]const u8){},
-        };
-    }
-
-    pub fn deinit(self: *ParsedValues) void {
-        self.flags.deinit();
-        self.counts.deinit();
-        var iterator = self.multi_options.iterator();
-        while (iterator.next()) |entry| {
-            entry.value_ptr.deinit(self.allocator);
-        }
-        self.multi_options.deinit();
-        self.options.deinit();
-        self.positionals.deinit(self.allocator);
-    }
-
-    /// Check if a flag was set.
-    pub fn getFlag(self: *const ParsedValues, name: []const u8) bool {
-        return self.flags.get(name) orelse false;
-    }
-
-    /// Get the count for a counted flag.
-    pub fn getCount(self: *const ParsedValues, name: []const u8) usize {
-        return self.counts.get(name) orelse 0;
-    }
-
-    /// Get an option value, returns null if not set.
-    pub fn getOption(self: *const ParsedValues, name: []const u8) ?[]const u8 {
-        return self.options.get(name);
-    }
-
-    /// Get all values for a multi-value option.
-    pub fn getOptionValues(self: *const ParsedValues, name: []const u8) ?[]const []const u8 {
-        if (self.multi_options.get(name)) |list| {
-            return list.items;
-        }
-        return null;
-    }
-
-    /// Get a required option value, error if not set.
-    pub fn getRequiredOption(self: *const ParsedValues, name: []const u8) Error![]const u8 {
-        return self.options.get(name) orelse error.MissingRequired;
-    }
-
-    /// Get all positional arguments.
-    pub fn getPositionals(self: *const ParsedValues) []const []const u8 {
-        return self.positionals.items;
-    }
-
-    /// Get a positional argument by position index (Phase 3).
-    pub fn getPositional(self: *const ParsedValues, pos: usize) ?[]const u8 {
-        if (pos < self.positionals.items.len) {
-            return self.positionals.items[pos];
-        }
-        return null;
-    }
-
-    /// Get a positional argument by position index, error if not set (Phase 3).
-    pub fn getRequiredPositional(self: *const ParsedValues, pos: usize) Error![]const u8 {
-        return self.getPositional(pos) orelse error.MissingRequired;
-    }
-
-    /// Get a positional argument as integer by position (Phase 3).
-    pub fn getIntPositional(self: *const ParsedValues, pos: usize) !i64 {
-        const str = try self.getRequiredPositional(pos);
-        return std.fmt.parseInt(i64, str, 10) catch return Error.InvalidValue;
-    }
-
-    /// Get a positional argument as float by position (Phase 3).
-    pub fn getFloatPositional(self: *const ParsedValues, pos: usize) !f64 {
-        const str = try self.getRequiredPositional(pos);
-        return std.fmt.parseFloat(f64, str) catch return Error.InvalidValue;
-    }
-
-    /// Get an option value as an integer.
-    pub fn getIntOption(self: *const ParsedValues, name: []const u8) !i64 {
-        const str = self.options.get(name) orelse return Error.MissingRequired;
-        return std.fmt.parseInt(i64, str, 10) catch return Error.InvalidValue;
-    }
-
-    /// Get an option value as an integer, with optional default.
-    pub fn getIntOptionDefault(self: *const ParsedValues, name: []const u8, default: i64) !i64 {
-        const str = self.options.get(name) orelse return default;
-        return std.fmt.parseInt(i64, str, 10) catch return Error.InvalidValue;
-    }
-
-    /// Get an option value as a float.
-    pub fn getFloatOption(self: *const ParsedValues, name: []const u8) !f64 {
-        const str = self.options.get(name) orelse return Error.MissingRequired;
-        return std.fmt.parseFloat(f64, str) catch return Error.InvalidValue;
-    }
-
-    /// Get an option value as a float, with optional default.
-    pub fn getFloatOptionDefault(self: *const ParsedValues, name: []const u8, default: f64) !f64 {
-        const str = self.options.get(name) orelse return default;
-        return std.fmt.parseFloat(f64, str) catch return Error.InvalidValue;
-    }
-
-    /// Get an option value as a boolean.
-    pub fn getBoolOption(self: *const ParsedValues, name: []const u8) !bool {
-        const str = self.options.get(name) orelse return Error.MissingRequired;
-        if (std.mem.eql(u8, str, "true") or std.mem.eql(u8, str, "1") or std.mem.eql(u8, str, "yes") or std.mem.eql(u8, str, "on")) {
-            return true;
-        }
-        if (std.mem.eql(u8, str, "false") or std.mem.eql(u8, str, "0") or std.mem.eql(u8, str, "no") or std.mem.eql(u8, str, "off")) {
-            return false;
-        }
-        return Error.InvalidValue;
-    }
-
-    /// Get an option value as a boolean, with optional default.
-    pub fn getBoolOptionDefault(self: *const ParsedValues, name: []const u8, default: bool) !bool {
-        const str = self.options.get(name) orelse return default;
-        if (std.mem.eql(u8, str, "true") or std.mem.eql(u8, str, "1") or std.mem.eql(u8, str, "yes") or std.mem.eql(u8, str, "on")) {
-            return true;
-        }
-        if (std.mem.eql(u8, str, "false") or std.mem.eql(u8, str, "0") or std.mem.eql(u8, str, "no") or std.mem.eql(u8, str, "off")) {
-            return false;
-        }
-        return Error.InvalidValue;
-    }
-};
+pub const ParsedValues = @import("parsed_values.zig").ParsedValues;
 
 /// Parser for command-line arguments.
 pub const Parser = struct {
     allocator: std.mem.Allocator,
     args: []const Arg,
     parsed: ParsedValues,
+    owned_args: ?[]const Arg = null,
 
     /// Map short names to arg indices for fast lookup
     short_map: std.AutoHashMap(u8, usize),
@@ -162,6 +28,23 @@ pub const Parser = struct {
 
     /// Configuration for help generation (Phase 4)
     help_config: HelpConfig,
+
+    last_error: ?ErrorContext = null,
+    const accessors = @import("parser_accessors.zig");
+    pub const getFlag = accessors.getFlag;
+    pub const getCount = accessors.getCount;
+    pub const getOption = accessors.getOption;
+    pub const getOptionValues = accessors.getOptionValues;
+    pub const getRequiredOption = accessors.getRequiredOption;
+    pub const getPositionals = accessors.getPositionals;
+    pub const getPositional = accessors.getPositional;
+    pub const getRequiredPositional = accessors.getRequiredPositional;
+    pub const getIntPositional = accessors.getIntPositional;
+    pub const getFloatPositional = accessors.getFloatPositional;
+    pub const getOptionDefault = accessors.getOptionDefault;
+    pub const getInt = accessors.getInt;
+    pub const getFloat = accessors.getFloat;
+    pub const get = accessors.get;
 
     pub fn init(allocator: std.mem.Allocator, args: []const Arg) !Parser {
         return initWithConfig(allocator, args, HelpConfig{});
@@ -194,20 +77,38 @@ pub const Parser = struct {
             .allocator = allocator,
             .args = args,
             .parsed = ParsedValues.init(allocator),
+            .owned_args = null,
             .short_map = short_map,
             .long_map = long_map,
             .help_config = config,
+            .last_error = null,
         };
+    }
+
+    pub fn initComptime(allocator: std.mem.Allocator, comptime args: []const Arg) !Parser {
+        @import("validate.zig").validateArgsComptime(args);
+        return init(allocator, args);
+    }
+
+    pub fn initOwned(allocator: std.mem.Allocator, args: []const Arg, config: HelpConfig) !Parser {
+        var parser = try initWithConfig(allocator, args, config);
+        parser.owned_args = args;
+        return parser;
     }
 
     pub fn deinit(self: *Parser) void {
         self.parsed.deinit();
         self.short_map.deinit();
         self.long_map.deinit();
+        if (self.owned_args) |owned| {
+            self.allocator.free(owned);
+        }
     }
 
     /// Parse command-line arguments.
     pub fn parse(self: *Parser, argv: []const []const u8) !void {
+        self.last_error = null;
+        self.parsed.reset();
         // Auto-detect --help or -h flag (Phase 4)
         for (argv) |arg_str| {
             if (std.mem.eql(u8, arg_str, "--help") or std.mem.eql(u8, arg_str, "-h")) {
@@ -235,25 +136,25 @@ pub const Parser = struct {
         }
 
         // Validate required arguments
-        for (self.args) |arg| {
+        for (self.args) |*arg| {
             if (!arg.required) continue;
             switch (arg.kind) {
                 .flag => {
-                    if (!self.parsed.getFlag(arg.name)) return Error.MissingRequired;
+                    if (!self.parsed.getFlag(arg.name)) return self.fail(Error.MissingRequired, null, arg, null);
                 },
                 .count => {
-                    if (self.parsed.getCount(arg.name) == 0) return Error.MissingRequired;
+                    if (self.parsed.getCount(arg.name) == 0) return self.fail(Error.MissingRequired, null, arg, null);
                 },
                 .option => {
                     const has_option = self.parsed.options.contains(arg.name) or self.parsed.multi_options.contains(arg.name);
                     if (!has_option and arg.default == null) {
-                        return Error.MissingRequired;
+                        return self.fail(Error.MissingRequired, null, arg, null);
                     }
                 },
                 .positional => {
                     if (arg.position) |pos| {
                         if (pos >= self.parsed.positionals.items.len) {
-                            return Error.MissingRequired;
+                            return self.fail(Error.MissingRequired, null, arg, null);
                         }
                     }
                 },
@@ -263,11 +164,11 @@ pub const Parser = struct {
         try self.validatePositionals();
     }
 
-    fn recordFlag(self: *Parser, arg: Arg) !void {
+    fn recordFlag(self: *Parser, arg: *const Arg) !void {
         try self.parsed.flags.put(arg.name, true);
     }
 
-    fn recordCount(self: *Parser, arg: Arg) !void {
+    fn recordCount(self: *Parser, arg: *const Arg) !void {
         const entry = try self.parsed.counts.getOrPut(arg.name);
         if (!entry.found_existing) {
             entry.value_ptr.* = 0;
@@ -275,9 +176,12 @@ pub const Parser = struct {
         entry.value_ptr.* += 1;
     }
 
-    fn recordOption(self: *Parser, arg: Arg, value: []const u8) !void {
+    fn recordOption(self: *Parser, arg: *const Arg, value: []const u8) !void {
         if (arg.validator) |validator| {
-            try validator(value);
+            validator(value) catch |err| {
+                if (err == Error.InvalidValue) return self.fail(Error.InvalidValue, null, arg, value);
+                return err;
+            };
         }
         if (arg.multiple) {
             var entry = try self.parsed.multi_options.getOrPut(arg.name);
@@ -288,7 +192,7 @@ pub const Parser = struct {
             try self.parsed.options.put(arg.name, value);
         } else {
             if (self.parsed.options.contains(arg.name)) {
-                return Error.DuplicateArgument;
+                return self.fail(Error.DuplicateArgument, null, arg, value);
             }
             try self.parsed.options.put(arg.name, value);
         }
@@ -315,29 +219,29 @@ pub const Parser = struct {
             const name = inner[0..eq_idx];
             const value = inner[eq_idx + 1 ..];
 
-            const arg_idx = self.long_map.get(name) orelse return Error.UnknownArgument;
-            const arg = self.args[arg_idx];
+            const arg_idx = self.long_map.get(name) orelse return self.fail(Error.UnknownArgument, arg_str, null, null);
+            const arg = &self.args[arg_idx];
 
             switch (arg.kind) {
                 .flag => try self.recordFlag(arg),
                 .count => try self.recordCount(arg),
                 .option => try self.recordOption(arg, value),
-                .positional => return Error.UnknownArgument,
+                .positional => return self.fail(Error.UnknownArgument, arg_str, null, null),
             }
         } else {
             // --name value syntax
-            const arg_idx = self.long_map.get(inner) orelse return Error.UnknownArgument;
-            const arg = self.args[arg_idx];
+            const arg_idx = self.long_map.get(inner) orelse return self.fail(Error.UnknownArgument, arg_str, null, null);
+            const arg = &self.args[arg_idx];
 
             switch (arg.kind) {
                 .flag => try self.recordFlag(arg),
                 .count => try self.recordCount(arg),
                 .option => {
                     i.* += 1;
-                    if (i.* >= argv.len) return Error.MissingValue;
+                    if (i.* >= argv.len) return self.fail(Error.MissingValue, arg_str, arg, null);
                     try self.recordOption(arg, argv[i.*]);
                 },
-                .positional => return Error.UnknownArgument,
+                .positional => return self.fail(Error.UnknownArgument, arg_str, null, null),
             }
         }
     }
@@ -346,25 +250,25 @@ pub const Parser = struct {
         // Single short flag: -f
         if (arg_str.len == 2) {
             const short = arg_str[1];
-            const arg_idx = self.short_map.get(short) orelse return Error.UnknownArgument;
-            const arg = self.args[arg_idx];
+            const arg_idx = self.short_map.get(short) orelse return self.fail(Error.UnknownArgument, arg_str, null, null);
+            const arg = &self.args[arg_idx];
 
             switch (arg.kind) {
                 .flag => try self.recordFlag(arg),
                 .count => try self.recordCount(arg),
                 .option => {
                     i.* += 1;
-                    if (i.* >= argv.len) return Error.MissingValue;
+                    if (i.* >= argv.len) return self.fail(Error.MissingValue, arg_str, arg, null);
                     try self.recordOption(arg, argv[i.*]);
                 },
-                .positional => return Error.UnknownArgument,
+                .positional => return self.fail(Error.UnknownArgument, arg_str, null, null),
             }
         }
         // -fvalue syntax (short option with attached value)
         else {
             const short = arg_str[1];
-            const arg_idx = self.short_map.get(short) orelse return Error.UnknownArgument;
-            const arg = self.args[arg_idx];
+            const arg_idx = self.short_map.get(short) orelse return self.fail(Error.UnknownArgument, arg_str, null, null);
+            const arg = &self.args[arg_idx];
 
             if (arg.kind == .option) {
                 const value = arg_str[2..];
@@ -372,226 +276,26 @@ pub const Parser = struct {
             } else {
                 // Multiple short flags combined: -vf
                 for (arg_str[1..]) |c| {
-                    const idx = self.short_map.get(c) orelse return Error.UnknownArgument;
-                    const a = self.args[idx];
+                    const idx = self.short_map.get(c) orelse return self.fail(Error.UnknownArgument, arg_str, null, null);
+                    const a = &self.args[idx];
                     switch (a.kind) {
                         .flag => try self.recordFlag(a),
                         .count => try self.recordCount(a),
-                        else => return Error.UnknownArgument,
+                        else => return self.fail(Error.UnknownArgument, arg_str, null, null),
                     }
                 }
             }
         }
     }
 
-    /// Get a flag value (convenience method).
-    pub fn getFlag(self: *const Parser, name: []const u8) bool {
-        return self.parsed.getFlag(name);
-    }
-
-    /// Get a count value (convenience method).
-    pub fn getCount(self: *const Parser, name: []const u8) usize {
-        return self.parsed.getCount(name);
-    }
-
-    /// Get an option value (convenience method).
-    pub fn getOption(self: *const Parser, name: []const u8) ?[]const u8 {
-        return self.parsed.getOption(name);
-    }
-
-    /// Get all values for a multi-value option.
-    pub fn getOptionValues(self: *const Parser, name: []const u8) ?[]const []const u8 {
-        return self.parsed.getOptionValues(name);
-    }
-
-    /// Get a required option value (convenience method).
-    pub fn getRequiredOption(self: *const Parser, name: []const u8) Error![]const u8 {
-        return self.parsed.getRequiredOption(name);
-    }
-
-    /// Get positional arguments (convenience method).
-    pub fn getPositionals(self: *const Parser) []const []const u8 {
-        return self.parsed.getPositionals();
-    }
-
-    /// Get a positional argument by name (Phase 3).
-    /// Looks up the position from arg definition.
-    pub fn getPositional(self: *const Parser, name: []const u8) ?[]const u8 {
-        for (self.args) |arg| {
-            if (std.mem.eql(u8, arg.name, name)) {
-                if (arg.position) |pos| {
-                    return self.parsed.getPositional(pos);
-                }
-            }
-        }
-        return null;
-    }
-
-    /// Get a required positional argument by name (Phase 3).
-    pub fn getRequiredPositional(self: *const Parser, name: []const u8) Error![]const u8 {
-        for (self.args) |arg| {
-            if (std.mem.eql(u8, arg.name, name)) {
-                if (arg.position) |pos| {
-                    return self.parsed.getRequiredPositional(pos);
-                }
-            }
-        }
-        return Error.UnknownArgument;
-    }
-
-    /// Get a positional argument as integer by name (Phase 3).
-    pub fn getIntPositional(self: *const Parser, name: []const u8) !i64 {
-        for (self.args) |arg| {
-            if (std.mem.eql(u8, arg.name, name)) {
-                if (arg.position) |pos| {
-                    return self.parsed.getIntPositional(pos);
-                }
-            }
-        }
-        return Error.UnknownArgument;
-    }
-
-    /// Get a positional argument as float by name (Phase 3).
-    pub fn getFloatPositional(self: *const Parser, name: []const u8) !f64 {
-        for (self.args) |arg| {
-            if (std.mem.eql(u8, arg.name, name)) {
-                if (arg.position) |pos| {
-                    return self.parsed.getFloatPositional(pos);
-                }
-            }
-        }
-        return Error.UnknownArgument;
-    }
-
-    /// Get an option value, using default if not set.
-    pub fn getOptionDefault(self: *const Parser, name: []const u8) ?[]const u8 {
-        if (self.parsed.options.get(name)) |val| {
-            return val;
-        }
-        // Look for default in arg definition
-        for (self.args) |arg| {
-            if (std.mem.eql(u8, arg.name, name)) {
-                if (arg.default) |def| {
-                    if (def == .string) return def.string;
-                }
-            }
-        }
-        return null;
-    }
-
-    /// Get an option value as integer, with default support from Arg definition.
-    pub fn getInt(self: *const Parser, name: []const u8) !i64 {
-        if (self.parsed.options.get(name)) |str| {
-            return std.fmt.parseInt(i64, str, 10) catch return Error.InvalidValue;
-        }
-        // Look for default in arg definition
-        for (self.args) |arg| {
-            if (std.mem.eql(u8, arg.name, name)) {
-                if (arg.default) |def| {
-                    if (def == .int) return def.int;
-                }
-                if (arg.required) return Error.MissingRequired;
-            }
-        }
-        return Error.MissingRequired;
-    }
-
-    /// Get an option value as float, with default support from Arg definition.
-    pub fn getFloat(self: *const Parser, name: []const u8) !f64 {
-        if (self.parsed.options.get(name)) |str| {
-            return std.fmt.parseFloat(f64, str) catch return Error.InvalidValue;
-        }
-        // Look for default in arg definition
-        for (self.args) |arg| {
-            if (std.mem.eql(u8, arg.name, name)) {
-                if (arg.default) |def| {
-                    if (def == .float) return def.float;
-                }
-                if (arg.required) return Error.MissingRequired;
-            }
-        }
-        return Error.MissingRequired;
-    }
-
-    /// Generic typed getter (Phase 2).
-    pub fn get(self: *const Parser, comptime name: []const u8, comptime T: type) !T {
-        const str_opt = self.parsed.options.get(name);
-
-        // Find arg definition to get type info and default
-        var arg_def: ?*const Arg = null;
-        for (self.args) |*arg| {
-            if (std.mem.eql(u8, arg.name, name)) {
-                arg_def = arg;
-                break;
-            }
-        }
-
-        const arg = arg_def orelse return Error.UnknownArgument;
-
-        // If value not provided, use default or error
-        if (str_opt == null) {
-            if (arg.default) |def| {
-                switch (T) {
-                    bool => {
-                        if (def == .bool) return def.bool;
-                    },
-                    []const u8 => {
-                        if (def == .string) return def.string;
-                    },
-                    i64, i32, i16, i8 => {
-                        if (def == .int) return @as(T, @intCast(def.int));
-                    },
-                    f64, f32 => {
-                        if (def == .float) return @as(f64, def.float);
-                    },
-                    else => {},
-                }
-            }
-            if (arg.required) return Error.MissingRequired;
-            return Error.MissingRequired;
-        }
-
-        const str = str_opt.?;
-
-        // Type conversion with type checking
-        switch (T) {
-            bool => {
-                if (std.mem.eql(u8, str, "true") or std.mem.eql(u8, str, "1") or std.mem.eql(u8, str, "yes") or std.mem.eql(u8, str, "on")) {
-                    return true;
-                }
-                if (std.mem.eql(u8, str, "false") or std.mem.eql(u8, str, "0") or std.mem.eql(u8, str, "no") or std.mem.eql(u8, str, "off")) {
-                    return false;
-                }
-                return Error.InvalidValue;
-            },
-            []const u8 => {
-                return str;
-            },
-            i64 => {
-                return std.fmt.parseInt(i64, str, 10) catch return Error.InvalidValue;
-            },
-            i32 => {
-                const val = std.fmt.parseInt(i64, str, 10) catch return Error.InvalidValue;
-                return std.math.cast(i32, val) orelse return Error.InvalidValue;
-            },
-            i16 => {
-                const val = std.fmt.parseInt(i64, str, 10) catch return Error.InvalidValue;
-                return std.math.cast(i16, val) orelse return Error.InvalidValue;
-            },
-            i8 => {
-                const val = std.fmt.parseInt(i64, str, 10) catch return Error.InvalidValue;
-                return std.math.cast(i8, val) orelse return Error.InvalidValue;
-            },
-            f64 => {
-                return std.fmt.parseFloat(f64, str) catch return Error.InvalidValue;
-            },
-            f32 => {
-                return std.math.cast(f32, try std.fmt.parseFloat(f64, str)) orelse return Error.InvalidValue;
-            },
-            else => {
-                @compileError("Unsupported type for get(): " ++ @typeName(T));
-            },
-        }
+    fn fail(self: *Parser, err: Error, token: ?[]const u8, arg: ?*const Arg, value: ?[]const u8) Error {
+        self.last_error = .{
+            .kind = err,
+            .token = token,
+            .arg = arg,
+            .value = value,
+        };
+        return err;
     }
 
     /// Generate and return help text (Phase 4).
@@ -599,1085 +303,17 @@ pub const Parser = struct {
         return generateHelp(self.allocator, self.args, self.help_config);
     }
 
+    /// Format a helpful error message for the last parse error.
+    pub fn formatError(self: *const Parser, allocator: std.mem.Allocator, err: Error, config: ErrorFormatConfig) ![]const u8 {
+        var context = self.last_error orelse ErrorContext{ .kind = err };
+        if (context.kind != err) {
+            context.kind = err;
+        }
+        return formatErrorMessage(allocator, context, config);
+    }
+
     /// Update help configuration (Phase 4).
     pub fn setHelpConfig(self: *Parser, config: HelpConfig) void {
         self.help_config = config;
     }
 };
-
-fn validateEven(value: []const u8) anyerror!void {
-    const number = std.fmt.parseInt(i64, value, 10) catch return Error.InvalidValue;
-    if (@rem(number, 2) != 0) return Error.InvalidValue;
-}
-
-test "parse single flag long" {
-    const args = [_]Arg{
-        .{ .name = "verbose", .long = "verbose", .kind = .flag },
-    };
-
-    const argv = [_][]const u8{ "program", "--verbose" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    try std.testing.expect(parser.getFlag("verbose"));
-}
-
-test "parse single flag short" {
-    const args = [_]Arg{
-        .{ .name = "verbose", .short = 'v', .kind = .flag },
-    };
-
-    const argv = [_][]const u8{ "program", "-v" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    try std.testing.expect(parser.getFlag("verbose"));
-}
-
-test "parse option long with space" {
-    const args = [_]Arg{
-        .{ .name = "file", .long = "file", .kind = .option },
-    };
-
-    const argv = [_][]const u8{ "program", "--file", "test.txt" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    try std.testing.expectEqualStrings("test.txt", parser.getOption("file").?);
-}
-
-test "parse option long with equals" {
-    const args = [_]Arg{
-        .{ .name = "file", .long = "file", .kind = .option },
-    };
-
-    const argv = [_][]const u8{ "program", "--file=test.txt" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    try std.testing.expectEqualStrings("test.txt", parser.getOption("file").?);
-}
-
-test "parse option short with space" {
-    const args = [_]Arg{
-        .{ .name = "file", .short = 'f', .kind = .option },
-    };
-
-    const argv = [_][]const u8{ "program", "-f", "test.txt" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    try std.testing.expectEqualStrings("test.txt", parser.getOption("file").?);
-}
-
-test "parse option short attached" {
-    const args = [_]Arg{
-        .{ .name = "file", .short = 'f', .kind = .option },
-    };
-
-    const argv = [_][]const u8{ "program", "-ftest.txt" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    try std.testing.expectEqualStrings("test.txt", parser.getOption("file").?);
-}
-
-test "parse multiple combined short flags" {
-    const args = [_]Arg{
-        .{ .name = "verbose", .short = 'v', .kind = .flag },
-        .{ .name = "quiet", .short = 'q', .kind = .flag },
-        .{ .name = "force", .short = 'f', .kind = .flag },
-    };
-
-    const argv = [_][]const u8{ "program", "-vqf" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    try std.testing.expect(parser.getFlag("verbose"));
-    try std.testing.expect(parser.getFlag("quiet"));
-    try std.testing.expect(parser.getFlag("force"));
-}
-
-test "parse mixed flags and options" {
-    const args = [_]Arg{
-        .{ .name = "verbose", .short = 'v', .long = "verbose", .kind = .flag },
-        .{ .name = "file", .short = 'f', .long = "file", .kind = .option },
-        .{ .name = "output", .short = 'o', .long = "output", .kind = .option },
-    };
-
-    const argv = [_][]const u8{ "program", "-v", "--file", "input.txt", "-o", "out.txt" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    try std.testing.expect(parser.getFlag("verbose"));
-    try std.testing.expectEqualStrings("input.txt", parser.getOption("file").?);
-    try std.testing.expectEqualStrings("out.txt", parser.getOption("output").?);
-}
-
-test "parse positional arguments" {
-    const args = [_]Arg{
-        .{ .name = "verbose", .short = 'v', .kind = .flag },
-    };
-
-    const argv = [_][]const u8{ "program", "file1.txt", "file2.txt", "-v" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const positionals = parser.getPositionals();
-    try std.testing.expectEqual(@as(usize, 2), positionals.len);
-    try std.testing.expectEqualStrings("file1.txt", positionals[0]);
-    try std.testing.expectEqualStrings("file2.txt", positionals[1]);
-    try std.testing.expect(parser.getFlag("verbose"));
-}
-
-test "error unknown long argument" {
-    const args = [_]Arg{
-        .{ .name = "verbose", .long = "verbose", .kind = .flag },
-    };
-
-    const argv = [_][]const u8{ "program", "--unknown" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try std.testing.expectError(Error.UnknownArgument, parser.parse(&argv));
-}
-
-test "error unknown short argument" {
-    const args = [_]Arg{
-        .{ .name = "verbose", .short = 'v', .kind = .flag },
-    };
-
-    const argv = [_][]const u8{ "program", "-x" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try std.testing.expectError(Error.UnknownArgument, parser.parse(&argv));
-}
-
-test "error missing option value" {
-    const args = [_]Arg{
-        .{ .name = "file", .long = "file", .kind = .option },
-    };
-
-    const argv = [_][]const u8{ "program", "--file" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try std.testing.expectError(Error.MissingValue, parser.parse(&argv));
-}
-
-test "error missing required option" {
-    const args = [_]Arg{
-        .{ .name = "file", .long = "file", .kind = .option, .required = true },
-    };
-
-    const argv = [_][]const u8{ "program" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try std.testing.expectError(Error.MissingRequired, parser.parse(&argv));
-}
-
-test "no arguments" {
-    const args = [_]Arg{
-        .{ .name = "verbose", .short = 'v', .kind = .flag },
-    };
-
-    const argv = [_][]const u8{ "program" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    try std.testing.expect(!parser.getFlag("verbose"));
-}
-
-// Phase 2 Tests: Type Conversion
-
-test "get int option valid" {
-    const args = [_]Arg{
-        .{ .name = "count", .long = "count", .kind = .option, .value_type = .int },
-    };
-
-    const argv = [_][]const u8{ "program", "--count", "42" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const count = try parser.getInt("count");
-    try std.testing.expectEqual(@as(i64, 42), count);
-}
-
-test "get int option invalid" {
-    const args = [_]Arg{
-        .{ .name = "count", .long = "count", .kind = .option, .value_type = .int },
-    };
-
-    const argv = [_][]const u8{ "program", "--count", "not-a-number" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    try std.testing.expectError(Error.InvalidValue, parser.getInt("count"));
-}
-
-test "get float option valid" {
-    const args = [_]Arg{
-        .{ .name = "ratio", .long = "ratio", .kind = .option, .value_type = .float },
-    };
-
-    const argv = [_][]const u8{ "program", "--ratio", "3.14159" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const ratio = try parser.getFloat("ratio");
-    try std.testing.expectApproxEqAbs(@as(f64, 3.14159), ratio, 0.00001);
-}
-
-test "get bool option true" {
-    const args = [_]Arg{
-        .{ .name = "enabled", .long = "enabled", .kind = .option, .value_type = .bool },
-    };
-
-    const argv = [_][]const u8{ "program", "--enabled", "true" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const enabled = try parser.parsed.getBoolOption("enabled");
-    try std.testing.expect(enabled);
-}
-
-test "get bool option false" {
-    const args = [_]Arg{
-        .{ .name = "enabled", .long = "enabled", .kind = .option, .value_type = .bool },
-    };
-
-    const argv = [_][]const u8{ "program", "--enabled", "false" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const enabled = try parser.parsed.getBoolOption("enabled");
-    try std.testing.expect(!enabled);
-}
-
-test "get bool option yes" {
-    const args = [_]Arg{
-        .{ .name = "enabled", .long = "enabled", .kind = .option, .value_type = .bool },
-    };
-
-    const argv = [_][]const u8{ "program", "--enabled", "yes" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const enabled = try parser.parsed.getBoolOption("enabled");
-    try std.testing.expect(enabled);
-}
-
-test "get bool option 1" {
-    const args = [_]Arg{
-        .{ .name = "enabled", .long = "enabled", .kind = .option, .value_type = .bool },
-    };
-
-    const argv = [_][]const u8{ "program", "--enabled", "1" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const enabled = try parser.parsed.getBoolOption("enabled");
-    try std.testing.expect(enabled);
-}
-
-test "get bool option invalid" {
-    const args = [_]Arg{
-        .{ .name = "enabled", .long = "enabled", .kind = .option, .value_type = .bool },
-    };
-
-    const argv = [_][]const u8{ "program", "--enabled", "maybe" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    try std.testing.expectError(Error.InvalidValue, parser.parsed.getBoolOption("enabled"));
-}
-
-test "get generic bool" {
-    const args = [_]Arg{
-        .{ .name = "flag", .long = "flag", .kind = .option, .value_type = .bool },
-    };
-
-    const argv = [_][]const u8{ "program", "--flag", "true" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const flag = try parser.get("flag", bool);
-    try std.testing.expect(flag);
-}
-
-test "get generic string" {
-    const args = [_]Arg{
-        .{ .name = "name", .long = "name", .kind = .option, .value_type = .string },
-    };
-
-    const argv = [_][]const u8{ "program", "--name", "ziggy" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const name = try parser.get("name", []const u8);
-    try std.testing.expectEqualStrings("ziggy", name);
-}
-
-test "get generic i64" {
-    const args = [_]Arg{
-        .{ .name = "count", .long = "count", .kind = .option, .value_type = .int },
-    };
-
-    const argv = [_][]const u8{ "program", "--count", "100" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const count = try parser.get("count", i64);
-    try std.testing.expectEqual(@as(i64, 100), count);
-}
-
-test "get generic i32" {
-    const args = [_]Arg{
-        .{ .name = "port", .long = "port", .kind = .option, .value_type = .int },
-    };
-
-    const argv = [_][]const u8{ "program", "--port", "8080" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const port = try parser.get("port", i32);
-    try std.testing.expectEqual(@as(i32, 8080), port);
-}
-
-test "get generic f64" {
-    const args = [_]Arg{
-        .{ .name = "ratio", .long = "ratio", .kind = .option, .value_type = .float },
-    };
-
-    const argv = [_][]const u8{ "program", "--ratio", "2.71828" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const ratio = try parser.get("ratio", f64);
-    try std.testing.expectApproxEqAbs(@as(f64, 2.71828), ratio, 0.00001);
-}
-
-// Phase 2 Tests: Default Values
-
-test "default int value" {
-    const args = [_]Arg{
-        .{ .name = "count", .long = "count", .kind = .option, .value_type = .int, .default = .{ .int = 10 } },
-    };
-
-    const argv = [_][]const u8{ "program" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const count = try parser.getInt("count");
-    try std.testing.expectEqual(@as(i64, 10), count);
-}
-
-test "default string value" {
-    const args = [_]Arg{
-        .{ .name = "output", .long = "output", .kind = .option, .value_type = .string, .default = .{ .string = "out.txt" } },
-    };
-
-    const argv = [_][]const u8{ "program" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const output = parser.getOptionDefault("output");
-    try std.testing.expect(output != null);
-    try std.testing.expectEqualStrings("out.txt", output.?);
-}
-
-test "default float value" {
-    const args = [_]Arg{
-        .{ .name = "threshold", .long = "threshold", .kind = .option, .value_type = .float, .default = .{ .float = 0.5 } },
-    };
-
-    const argv = [_][]const u8{ "program" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const threshold = try parser.getFloat("threshold");
-    try std.testing.expectApproxEqAbs(@as(f64, 0.5), threshold, 0.00001);
-}
-
-test "default value overridden by cli argument" {
-    const args = [_]Arg{
-        .{ .name = "count", .long = "count", .kind = .option, .value_type = .int, .default = .{ .int = 10 } },
-    };
-
-    const argv = [_][]const u8{ "program", "--count", "42" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const count = try parser.getInt("count");
-    try std.testing.expectEqual(@as(i64, 42), count);
-}
-
-test "generic get with default" {
-    const args = [_]Arg{
-        .{ .name = "port", .long = "port", .kind = .option, .value_type = .int, .default = .{ .int = 3000 } },
-    };
-
-    const argv = [_][]const u8{ "program" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const port = try parser.get("port", i32);
-    try std.testing.expectEqual(@as(i32, 3000), port);
-}
-
-test "get with default overridden" {
-    const args = [_]Arg{
-        .{ .name = "port", .long = "port", .kind = .option, .value_type = .int, .default = .{ .int = 3000 } },
-    };
-
-    const argv = [_][]const u8{ "program", "--port", "8080" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const port = try parser.get("port", i32);
-    try std.testing.expectEqual(@as(i32, 8080), port);
-}
-
-test "required with no value and no default" {
-    const args = [_]Arg{
-        .{ .name = "count", .long = "count", .kind = .option, .value_type = .int, .required = true },
-    };
-
-    const argv = [_][]const u8{ "program" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try std.testing.expectError(Error.MissingRequired, parser.parse(&argv));
-}
-
-test "required satisfied by default" {
-    const args = [_]Arg{
-        .{ .name = "count", .long = "count", .kind = .option, .value_type = .int, .required = true, .default = .{ .int = 5 } },
-    };
-
-    const argv = [_][]const u8{ "program" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const count = try parser.getInt("count");
-    try std.testing.expectEqual(@as(i64, 5), count);
-}
-
-test "parsed values get int option default" {
-    const args = [_]Arg{
-        .{ .name = "count", .long = "count", .kind = .option, .value_type = .int },
-    };
-
-    const argv = [_][]const u8{ "program" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const count = try parser.parsed.getIntOptionDefault("count", 10);
-    try std.testing.expectEqual(@as(i64, 10), count);
-}
-
-test "parsed values get float option default" {
-    const args = [_]Arg{
-        .{ .name = "ratio", .long = "ratio", .kind = .option, .value_type = .float },
-    };
-
-    const argv = [_][]const u8{ "program" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const ratio = try parser.parsed.getFloatOptionDefault("ratio", 0.5);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.5), ratio, 0.00001);
-}
-
-test "parsed values get bool option default" {
-    const args = [_]Arg{
-        .{ .name = "enabled", .long = "enabled", .kind = .option, .value_type = .bool },
-    };
-
-    const argv = [_][]const u8{ "program" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const enabled = try parser.parsed.getBoolOptionDefault("enabled", false);
-    try std.testing.expect(!enabled);
-}
-
-// Phase 3 Tests: Positional Arguments
-
-test "positional argument defined" {
-    const args = [_]Arg{
-        .{ .name = "input", .kind = .positional, .position = 0 },
-    };
-
-    const argv = [_][]const u8{ "program", "file.txt" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const input = parser.getPositional("input");
-    try std.testing.expect(input != null);
-    try std.testing.expectEqualStrings("file.txt", input.?);
-}
-
-test "positional argument by position index" {
-    const args = [_]Arg{
-        .{ .name = "input", .kind = .positional, .position = 0 },
-    };
-
-    const argv = [_][]const u8{ "program", "file.txt" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const input = parser.parsed.getPositional(0);
-    try std.testing.expect(input != null);
-    try std.testing.expectEqualStrings("file.txt", input.?);
-}
-
-test "multiple positional arguments" {
-    const args = [_]Arg{
-        .{ .name = "input", .kind = .positional, .position = 0 },
-        .{ .name = "output", .kind = .positional, .position = 1 },
-    };
-
-    const argv = [_][]const u8{ "program", "input.txt", "output.txt" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const input = parser.getPositional("input");
-    const output = parser.getPositional("output");
-
-    try std.testing.expect(input != null);
-    try std.testing.expect(output != null);
-    try std.testing.expectEqualStrings("input.txt", input.?);
-    try std.testing.expectEqualStrings("output.txt", output.?);
-}
-
-test "required positional provided" {
-    const args = [_]Arg{
-        .{ .name = "input", .kind = .positional, .position = 0, .required = true },
-    };
-
-    const argv = [_][]const u8{ "program", "file.txt" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const input = try parser.getRequiredPositional("input");
-    try std.testing.expectEqualStrings("file.txt", input);
-}
-
-test "required positional missing" {
-    const args = [_]Arg{
-        .{ .name = "input", .kind = .positional, .position = 0, .required = true },
-    };
-
-    const argv = [_][]const u8{ "program" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try std.testing.expectError(Error.MissingRequired, parser.parse(&argv));
-}
-
-test "positional as integer" {
-    const args = [_]Arg{
-        .{ .name = "count", .kind = .positional, .position = 0, .value_type = .int },
-    };
-
-    const argv = [_][]const u8{ "program", "42" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const count = try parser.getIntPositional("count");
-    try std.testing.expectEqual(@as(i64, 42), count);
-}
-
-test "positional as float" {
-    const args = [_]Arg{
-        .{ .name = "ratio", .kind = .positional, .position = 0, .value_type = .float },
-    };
-
-    const argv = [_][]const u8{ "program", "3.14159" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const ratio = try parser.getFloatPositional("ratio");
-    try std.testing.expectApproxEqAbs(@as(f64, 3.14159), ratio, 0.00001);
-}
-
-test "positional invalid integer" {
-    const args = [_]Arg{
-        .{ .name = "count", .kind = .positional, .position = 0, .value_type = .int },
-    };
-
-    const argv = [_][]const u8{ "program", "not-a-number" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    try std.testing.expectError(Error.InvalidValue, parser.getIntPositional("count"));
-}
-
-test "mixed flags and positionals" {
-    const args = [_]Arg{
-        .{ .name = "verbose", .short = 'v', .long = "verbose", .kind = .flag },
-        .{ .name = "input", .kind = .positional, .position = 0 },
-        .{ .name = "output", .kind = .positional, .position = 1 },
-    };
-
-    const argv = [_][]const u8{ "program", "-v", "input.txt", "output.txt" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    try std.testing.expect(parser.getFlag("verbose"));
-    try std.testing.expectEqualStrings("input.txt", parser.getPositional("input").?);
-    try std.testing.expectEqualStrings("output.txt", parser.getPositional("output").?);
-}
-
-test "mixed options and positionals" {
-    const args = [_]Arg{
-        .{ .name = "file", .short = 'f', .long = "file", .kind = .option },
-        .{ .name = "input", .kind = .positional, .position = 0 },
-    };
-
-    const argv = [_][]const u8{ "program", "--file", "config.txt", "data.txt" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    try std.testing.expectEqualStrings("config.txt", parser.getOption("file").?);
-    try std.testing.expectEqualStrings("data.txt", parser.getPositional("input").?);
-}
-
-test "flags after positionals" {
-    const args = [_]Arg{
-        .{ .name = "verbose", .short = 'v', .kind = .flag },
-        .{ .name = "input", .kind = .positional, .position = 0 },
-    };
-
-    const argv = [_][]const u8{ "program", "data.txt", "-v" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    try std.testing.expect(parser.getFlag("verbose"));
-    try std.testing.expectEqualStrings("data.txt", parser.getPositional("input").?);
-}
-
-test "options after positionals" {
-    const args = [_]Arg{
-        .{ .name = "count", .short = 'c', .long = "count", .kind = .option },
-        .{ .name = "input", .kind = .positional, .position = 0 },
-    };
-
-    const argv = [_][]const u8{ "program", "data.txt", "--count", "10" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    try std.testing.expectEqualStrings("10", parser.getOption("count").?);
-    try std.testing.expectEqualStrings("data.txt", parser.getPositional("input").?);
-}
-
-test "fully mixed: flags, options, and positionals" {
-    const args = [_]Arg{
-        .{ .name = "verbose", .short = 'v', .kind = .flag },
-        .{ .name = "output", .short = 'o', .long = "output", .kind = .option },
-        .{ .name = "input", .kind = .positional, .position = 0 },
-        .{ .name = "count", .kind = .positional, .position = 1 },
-    };
-
-    const argv = [_][]const u8{ "program", "-v", "input.txt", "5", "--output", "result.txt" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    try std.testing.expect(parser.getFlag("verbose"));
-    try std.testing.expectEqualStrings("result.txt", parser.getOption("output").?);
-    try std.testing.expectEqualStrings("input.txt", parser.getPositional("input").?);
-    try std.testing.expectEqual(@as(i64, 5), try parser.getIntPositional("count"));
-}
-
-test "unnamed positionals collected" {
-    const args = [_]Arg{
-        .{ .name = "verbose", .short = 'v', .kind = .flag },
-    };
-
-    const argv = [_][]const u8{ "program", "file1.txt", "file2.txt", "file3.txt", "-v" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const positionals = parser.getPositionals();
-    try std.testing.expectEqual(@as(usize, 3), positionals.len);
-    try std.testing.expectEqualStrings("file1.txt", positionals[0]);
-    try std.testing.expectEqualStrings("file2.txt", positionals[1]);
-    try std.testing.expectEqualStrings("file3.txt", positionals[2]);
-    try std.testing.expect(parser.getFlag("verbose"));
-}
-
-test "partial named positionals with extras" {
-    const args = [_]Arg{
-        .{ .name = "input", .kind = .positional, .position = 0 },
-    };
-
-    const argv = [_][]const u8{ "program", "main.txt", "extra1.txt", "extra2.txt" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    try std.testing.expectEqualStrings("main.txt", parser.getPositional("input").?);
-
-    const positionals = parser.getPositionals();
-    try std.testing.expectEqual(@as(usize, 3), positionals.len);
-}
-
-test "missing positional at defined position" {
-    const args = [_]Arg{
-        .{ .name = "input", .kind = .positional, .position = 0 },
-        .{ .name = "output", .kind = .positional, .position = 1 },
-    };
-
-    const argv = [_][]const u8{ "program", "only-input.txt" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    try std.testing.expectEqualStrings("only-input.txt", parser.getPositional("input").?);
-    try std.testing.expect(parser.getPositional("output") == null);
-}
-
-// Phase 4 Tests: Help Generation
-
-test "parser help method generates help" {
-    const args = [_]Arg{
-        .{ .name = "verbose", .short = 'v', .long = "verbose", .kind = .flag, .help = "Enable verbose output" },
-        .{ .name = "output", .short = 'o', .long = "output", .kind = .option, .help = "Output file" },
-    };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    const help = try parser.help();
-    defer std.testing.allocator.free(help);
-
-    try std.testing.expect(std.mem.indexOf(u8, help, "Usage:") != null);
-    try std.testing.expect(std.mem.indexOf(u8, help, "-v, --verbose") != null);
-    try std.testing.expect(std.mem.indexOf(u8, help, "Enable verbose output") != null);
-    try std.testing.expect(std.mem.indexOf(u8, help, "-o, --output") != null);
-}
-
-test "parser with custom help config" {
-    const args = [_]Arg{
-        .{ .name = "verbose", .short = 'v', .long = "verbose", .kind = .flag, .help = "Enable verbose output" },
-    };
-
-    const config = HelpConfig{
-        .program_name = "mytool",
-        .description = "A tool for doing things",
-        .options_width = 30,
-    };
-
-    var parser = try Parser.initWithConfig(std.testing.allocator, &args, config);
-    defer parser.deinit();
-
-    const help = try parser.help();
-    defer std.testing.allocator.free(help);
-
-    try std.testing.expect(std.mem.indexOf(u8, help, "Usage: mytool") != null);
-    try std.testing.expect(std.mem.indexOf(u8, help, "A tool for doing things") != null);
-}
-
-test "parse returns ShowHelp for --help" {
-    const args = [_]Arg{
-        .{ .name = "verbose", .short = 'v', .long = "verbose", .kind = .flag },
-    };
-
-    const argv = [_][]const u8{ "program", "--help" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try std.testing.expectError(Error.ShowHelp, parser.parse(&argv));
-}
-
-test "parse returns ShowHelp for -h" {
-    const args = [_]Arg{
-        .{ .name = "verbose", .short = 'v', .long = "verbose", .kind = .flag },
-    };
-
-    const argv = [_][]const u8{ "program", "-h" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try std.testing.expectError(Error.ShowHelp, parser.parse(&argv));
-}
-
-test "setHelpConfig updates configuration" {
-    const args = [_]Arg{
-        .{ .name = "verbose", .short = 'v', .long = "verbose", .kind = .flag, .help = "Enable verbose output" },
-    };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    parser.setHelpConfig(.{
-        .program_name = "newname",
-        .description = "New description",
-    });
-
-    const help = try parser.help();
-    defer std.testing.allocator.free(help);
-
-    try std.testing.expect(std.mem.indexOf(u8, help, "Usage: newname") != null);
-    try std.testing.expect(std.mem.indexOf(u8, help, "New description") != null);
-}
-
-// Phase 5 Tests: Advanced Features
-
-test "counted short flags" {
-    const args = [_]Arg{
-        .{ .name = "verbose", .short = 'v', .kind = .count },
-    };
-
-    const argv = [_][]const u8{ "program", "-vvv" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    try std.testing.expectEqual(@as(usize, 3), parser.getCount("verbose"));
-}
-
-test "counted long flags" {
-    const args = [_]Arg{
-        .{ .name = "verbose", .long = "verbose", .kind = .count },
-    };
-
-    const argv = [_][]const u8{ "program", "--verbose", "--verbose" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    try std.testing.expectEqual(@as(usize, 2), parser.getCount("verbose"));
-}
-
-test "option validator rejects value" {
-    const args = [_]Arg{
-        .{ .name = "count", .long = "count", .kind = .option, .validator = validateEven },
-    };
-
-    const argv = [_][]const u8{ "program", "--count", "3" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try std.testing.expectError(Error.InvalidValue, parser.parse(&argv));
-}
-
-test "positional validator rejects value" {
-    const args = [_]Arg{
-        .{ .name = "count", .kind = .positional, .position = 0, .validator = validateEven },
-    };
-
-    const argv = [_][]const u8{ "program", "3" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try std.testing.expectError(Error.InvalidValue, parser.parse(&argv));
-}
-
-test "parse long alias" {
-    const args = [_]Arg{
-        .{ .name = "output", .long = "output", .aliases = &.{ "out" }, .kind = .option },
-    };
-
-    const argv = [_][]const u8{ "program", "--out", "file.txt" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    try std.testing.expectEqualStrings("file.txt", parser.getOption("output").?);
-}
-
-test "parse short alias" {
-    const args = [_]Arg{
-        .{ .name = "output", .short = 'o', .short_aliases = &.{ 'O' }, .kind = .option },
-    };
-
-    const argv = [_][]const u8{ "program", "-O", "file.txt" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    try std.testing.expectEqualStrings("file.txt", parser.getOption("output").?);
-}
-
-test "multi-value option collects values" {
-    const args = [_]Arg{
-        .{ .name = "file", .long = "file", .kind = .option, .multiple = true },
-    };
-
-    const argv = [_][]const u8{ "program", "--file", "a.txt", "--file", "b.txt" };
-
-    var parser = try Parser.init(std.testing.allocator, &args);
-    defer parser.deinit();
-
-    try parser.parse(&argv);
-
-    const values = parser.getOptionValues("file").?;
-    try std.testing.expectEqual(@as(usize, 2), values.len);
-    try std.testing.expectEqualStrings("a.txt", values[0]);
-    try std.testing.expectEqualStrings("b.txt", values[1]);
-    try std.testing.expectEqualStrings("b.txt", parser.getOption("file").?);
-}

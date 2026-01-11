@@ -6,7 +6,12 @@ const Arg = @import("arg.zig").Arg;
 const ValueType = @import("arg.zig").ValueType;
 const Parser = @import("parser.zig").Parser;
 const Error = @import("error.zig").Error;
+const ErrorContext = @import("error.zig").ErrorContext;
+const ErrorFormatConfig = @import("error.zig").ErrorFormatConfig;
+const formatErrorMessage = @import("error.zig").formatError;
 const HelpConfig = @import("help.zig").HelpConfig;
+const Ansi = @import("style.zig").Ansi;
+const useColorStdout = @import("style.zig").useColorStdout;
 
 /// Defines a command with optional subcommands.
 pub const Command = struct {
@@ -32,6 +37,18 @@ pub const Command = struct {
     /// Generate help for this command only (no argv path inspection).
     pub fn helpText(self: *const Command, allocator: std.mem.Allocator) ![]const u8 {
         return self.generateHelp(allocator, self.name);
+    }
+
+    /// Format a helpful error message for command errors.
+    pub fn formatError(self: *const Command, allocator: std.mem.Allocator, err: Error, argv: []const []const u8, config: ErrorFormatConfig) ![]const u8 {
+        var context = ErrorContext{ .kind = err };
+        if (err == Error.UnknownCommand) {
+            const scan = scanForSubcommand(self, argv);
+            if (scan.first_positional) |token| {
+                context.token = token;
+            }
+        }
+        return formatErrorMessage(allocator, context, config);
     }
 
     fn runWithPath(self: *const Command, allocator: std.mem.Allocator, argv: []const []const u8, path: []const u8) !void {
@@ -85,12 +102,14 @@ pub const Command = struct {
         if (config.description.len == 0) {
             config.description = self.help;
         }
+        const color = useColorStdout(config.color);
 
         var buffer = array_list.AlignedManaged(u8, null).init(allocator);
         defer buffer.deinit();
 
         // Usage line
-        try buffer.writer().print("Usage: {s}", .{config.program_name});
+        try writeLabel(buffer.writer(), color, "Usage:");
+        try buffer.writer().print(" {s}", .{config.program_name});
 
         if (hasOptions(self.args)) {
             try buffer.writer().writeAll(" [OPTIONS]");
@@ -118,13 +137,13 @@ pub const Command = struct {
         }
 
         if (self.args.len > 0) {
-            try buffer.writer().writeAll("Arguments:\n");
-            try displayArgs(buffer.writer(), allocator, self.args, config);
+            try writeSectionHeader(buffer.writer(), color, "Arguments:");
+            try displayArgs(buffer.writer(), allocator, self.args, config, color);
         }
 
         if (self.subcommands.len > 0) {
-            try buffer.writer().writeAll("Subcommands:\n");
-            try displaySubcommands(buffer.writer(), self.subcommands, config);
+            try writeSectionHeader(buffer.writer(), color, "Subcommands:");
+            try displaySubcommands(buffer.writer(), self.subcommands, config, color);
         }
 
         return buffer.toOwnedSlice();
@@ -201,7 +220,7 @@ fn joinPath(allocator: std.mem.Allocator, prefix: []const u8, name: []const u8) 
     return buffer.toOwnedSlice();
 }
 
-fn displaySubcommands(writer: anytype, subcommands: []const Command, config: HelpConfig) !void {
+fn displaySubcommands(writer: anytype, subcommands: []const Command, config: HelpConfig, color: bool) !void {
     for (subcommands) |cmd| {
         var options_buffer: [256]u8 = undefined;
         var fbs = std.io.fixedBufferStream(&options_buffer);
@@ -221,12 +240,18 @@ fn displaySubcommands(writer: anytype, subcommands: []const Command, config: Hel
             try writer.writeByte(' ');
         }
 
+        if (color) {
+            try writer.writeAll(Ansi.dim);
+        }
         try writer.writeAll(cmd.help);
+        if (color) {
+            try writer.writeAll(Ansi.reset);
+        }
         try writer.writeAll("\n");
     }
 }
 
-fn displayArgs(writer: anytype, allocator: std.mem.Allocator, args: []const Arg, config: HelpConfig) !void {
+fn displayArgs(writer: anytype, allocator: std.mem.Allocator, args: []const Arg, config: HelpConfig, color: bool) !void {
     var flags = array_list.AlignedManaged(*const Arg, null).init(allocator);
     defer flags.deinit();
     var options = array_list.AlignedManaged(*const Arg, null).init(allocator);
@@ -245,25 +270,53 @@ fn displayArgs(writer: anytype, allocator: std.mem.Allocator, args: []const Arg,
     }
 
     if (flags.items.len > 0) {
-        try writer.writeAll("  Flags:\n");
+        try writeIndentedHeader(writer, color, "Flags:");
         for (flags.items) |arg| {
             try displayArg(writer, arg.*, config, true);
         }
     }
 
     if (options.items.len > 0) {
-        try writer.writeAll("  Options:\n");
+        try writeIndentedHeader(writer, color, "Options:");
         for (options.items) |arg| {
             try displayArg(writer, arg.*, config, true);
         }
     }
 
     if (positionals.items.len > 0) {
-        try writer.writeAll("  Positionals:\n");
+        try writeIndentedHeader(writer, color, "Positionals:");
         for (positionals.items) |arg| {
             try displayArg(writer, arg.*, config, false);
         }
     }
+}
+
+fn writeLabel(writer: anytype, color: bool, text: []const u8) !void {
+    if (color) {
+        try writer.writeAll(Ansi.bold);
+        try writer.writeAll(Ansi.green);
+    }
+    try writer.writeAll(text);
+    if (color) {
+        try writer.writeAll(Ansi.reset);
+    }
+}
+
+fn writeSectionHeader(writer: anytype, color: bool, text: []const u8) !void {
+    if (color) {
+        try writer.writeAll(Ansi.bold);
+        try writer.writeAll(Ansi.cyan);
+    }
+    try writer.writeAll(text);
+    if (color) {
+        try writer.writeAll(Ansi.reset);
+    }
+    try writer.writeAll("\n");
+}
+
+fn writeIndentedHeader(writer: anytype, color: bool, text: []const u8) !void {
+    try writer.writeAll("  ");
+    try writeSectionHeader(writer, color, text);
 }
 
 fn displayArg(writer: anytype, arg: Arg, config: HelpConfig, has_prefix: bool) !void {

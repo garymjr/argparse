@@ -5,6 +5,9 @@ const array_list = std.array_list;
 const Arg = @import("arg.zig").Arg;
 const ArgKind = @import("arg.zig").ArgKind;
 const ValueType = @import("arg.zig").ValueType;
+const Ansi = @import("style.zig").Ansi;
+const ColorMode = @import("style.zig").ColorMode;
+const useColorStdout = @import("style.zig").useColorStdout;
 
 /// Configuration for help text formatting.
 pub const HelpConfig = struct {
@@ -22,15 +25,20 @@ pub const HelpConfig = struct {
 
     /// Whether to show value placeholders in options
     show_placeholders: bool = true,
+
+    /// Color mode for help output
+    color: ColorMode = .auto,
 };
 
 /// Generate help text for a set of arguments.
 pub fn generateHelp(allocator: std.mem.Allocator, args: []const Arg, config: HelpConfig) ![]const u8 {
     var buffer = array_list.AlignedManaged(u8, null).init(allocator);
     defer buffer.deinit();
+    const color = useColorStdout(config.color);
 
     // Header: usage line
-    try buffer.writer().print("Usage: {s}", .{config.program_name});
+    try writeLabel(buffer.writer(), color, "Usage:");
+    try buffer.writer().print(" {s}", .{config.program_name});
 
     // Add [OPTIONS] if there are any flags or options
     var has_options = false;
@@ -64,10 +72,10 @@ pub fn generateHelp(allocator: std.mem.Allocator, args: []const Arg, config: Hel
     }
 
     // Arguments section
-    try buffer.writer().writeAll("Arguments:\n");
+    try writeSectionHeader(buffer.writer(), color, "Arguments:");
 
     // Group and display arguments
-    try displayArgs(buffer.writer(), allocator, args, config);
+    try displayArgs(buffer.writer(), allocator, args, config, color);
 
     return buffer.toOwnedSlice();
 }
@@ -76,8 +84,10 @@ pub fn generateHelp(allocator: std.mem.Allocator, args: []const Arg, config: Hel
 pub fn generateUsage(allocator: std.mem.Allocator, args: []const Arg, config: HelpConfig) ![]const u8 {
     var buffer = array_list.AlignedManaged(u8, null).init(allocator);
     defer buffer.deinit();
+    const color = useColorStdout(config.color);
 
-    try buffer.writer().print("Usage: {s}", .{config.program_name});
+    try writeLabel(buffer.writer(), color, "Usage:");
+    try buffer.writer().print(" {s}", .{config.program_name});
 
     var has_options = false;
     for (args) |arg| {
@@ -105,7 +115,7 @@ pub fn generateUsage(allocator: std.mem.Allocator, args: []const Arg, config: He
 }
 
 /// Display arguments grouped by kind.
-fn displayArgs(writer: anytype, allocator: std.mem.Allocator, args: []const Arg, config: HelpConfig) !void {
+fn displayArgs(writer: anytype, allocator: std.mem.Allocator, args: []const Arg, config: HelpConfig, color: bool) !void {
     // Separate args by kind
     var flags = array_list.AlignedManaged(*const Arg, null).init(allocator);
     defer flags.deinit();
@@ -126,7 +136,7 @@ fn displayArgs(writer: anytype, allocator: std.mem.Allocator, args: []const Arg,
 
     // Display flags
     if (flags.items.len > 0) {
-        try writer.writeAll("  Flags:\n");
+        try writeIndentedHeader(writer, color, "Flags:");
         for (flags.items) |arg| {
             try displayArg(writer, arg.*, config, true);
         }
@@ -134,7 +144,7 @@ fn displayArgs(writer: anytype, allocator: std.mem.Allocator, args: []const Arg,
 
     // Display options
     if (options.items.len > 0) {
-        try writer.writeAll("  Options:\n");
+        try writeIndentedHeader(writer, color, "Options:");
         for (options.items) |arg| {
             try displayArg(writer, arg.*, config, true);
         }
@@ -142,11 +152,39 @@ fn displayArgs(writer: anytype, allocator: std.mem.Allocator, args: []const Arg,
 
     // Display positionals
     if (positionals.items.len > 0) {
-        try writer.writeAll("  Positionals:\n");
+        try writeIndentedHeader(writer, color, "Positionals:");
         for (positionals.items) |arg| {
             try displayArg(writer, arg.*, config, false);
         }
     }
+}
+
+fn writeLabel(writer: anytype, color: bool, text: []const u8) !void {
+    if (color) {
+        try writer.writeAll(Ansi.bold);
+        try writer.writeAll(Ansi.green);
+    }
+    try writer.writeAll(text);
+    if (color) {
+        try writer.writeAll(Ansi.reset);
+    }
+}
+
+fn writeSectionHeader(writer: anytype, color: bool, text: []const u8) !void {
+    if (color) {
+        try writer.writeAll(Ansi.bold);
+        try writer.writeAll(Ansi.cyan);
+    }
+    try writer.writeAll(text);
+    if (color) {
+        try writer.writeAll(Ansi.reset);
+    }
+    try writer.writeAll("\n");
+}
+
+fn writeIndentedHeader(writer: anytype, color: bool, text: []const u8) !void {
+    try writer.writeAll("  ");
+    try writeSectionHeader(writer, color, text);
 }
 
 /// Display a single argument.
@@ -308,6 +346,7 @@ test "generate basic help" {
         .description = "A sample application for demonstration",
         .max_width = 80,
         .options_width = 25,
+        .color = .never,
     };
 
     const help_text = try generateHelp(std.testing.allocator, &args, config);
@@ -332,6 +371,7 @@ test "generate usage line" {
 
     const config = HelpConfig{
         .program_name = "tool",
+        .color = .never,
     };
 
     const usage = try generateUsage(std.testing.allocator, &args, config);
@@ -349,6 +389,7 @@ test "generate help with defaults" {
 
     const config = HelpConfig{
         .program_name = "app",
+        .color = .never,
     };
 
     const help = try generateHelp(std.testing.allocator, &args, config);
@@ -367,6 +408,7 @@ test "generate help with required marker" {
 
     const config = HelpConfig{
         .program_name = "app",
+        .color = .never,
     };
 
     const help = try generateHelp(std.testing.allocator, &args, config);
@@ -383,6 +425,7 @@ test "generate help no placeholders" {
     const config = HelpConfig{
         .program_name = "app",
         .show_placeholders = false,
+        .color = .never,
     };
 
     const help = try generateHelp(std.testing.allocator, &args, config);

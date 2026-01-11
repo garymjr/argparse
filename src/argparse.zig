@@ -11,10 +11,19 @@ pub const Value = @import("arg.zig").Value;
 pub const Parser = @import("parser.zig").Parser;
 pub const ParsedValues = @import("parser.zig").ParsedValues;
 pub const Command = @import("command.zig").Command;
+pub const Builder = @import("builder.zig").Builder;
+pub const ArgOptions = @import("builder.zig").ArgOptions;
 
 pub const Error = @import("error.zig").Error;
+pub const ErrorContext = @import("error.zig").ErrorContext;
+pub const ErrorFormatConfig = @import("error.zig").ErrorFormatConfig;
+pub const formatError = @import("error.zig").formatError;
+
+pub const ColorMode = @import("style.zig").ColorMode;
 
 pub const HelpConfig = @import("help.zig").HelpConfig;
 pub const helpArg = @import("help.zig").helpArg;
 pub const generateHelp = @import("help.zig").generateHelp;
 pub const generateUsage = @import("help.zig").generateUsage;
+
+pub const validateArgsComptime = @import("validate.zig").validateArgsComptime;
