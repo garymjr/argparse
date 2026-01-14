@@ -85,9 +85,11 @@ pub fn getOptionDefault(self: anytype, name: []const u8) ?[]const u8 {
 }
 
 pub fn getInt(self: anytype, name: []const u8) !i64 {
-    if (self.parsed.options.get(name)) |str| {
-        return std.fmt.parseInt(i64, str, 10) catch return Error.InvalidValue;
+    // Check typed storage first (validated at parse time)
+    if (self.parsed.getTypedOption(name)) |typed_val| {
+        if (typed_val == .int) return typed_val.int;
     }
+    // Fallback to default values
     for (self.args) |arg| {
         if (std.mem.eql(u8, arg.name, name)) {
             if (arg.default) |def| {
@@ -100,9 +102,11 @@ pub fn getInt(self: anytype, name: []const u8) !i64 {
 }
 
 pub fn getFloat(self: anytype, name: []const u8) !f64 {
-    if (self.parsed.options.get(name)) |str| {
-        return std.fmt.parseFloat(f64, str) catch return Error.InvalidValue;
+    // Check typed storage first (validated at parse time)
+    if (self.parsed.getTypedOption(name)) |typed_val| {
+        if (typed_val == .float) return typed_val.float;
     }
+    // Fallback to default values
     for (self.args) |arg| {
         if (std.mem.eql(u8, arg.name, name)) {
             if (arg.default) |def| {
