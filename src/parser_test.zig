@@ -252,9 +252,8 @@ test "get int option invalid" {
     var parser = try Parser.init(std.testing.allocator, &args);
     defer parser.deinit();
 
-    try parser.parse(&argv);
-
-    try std.testing.expectError(Error.InvalidValue, parser.getInt("count"));
+    // Validation now happens during parsing
+    try std.testing.expectError(Error.InvalidValue, parser.parse(&argv));
 }
 
 test "get float option valid" {
@@ -347,9 +346,8 @@ test "get bool option invalid" {
     var parser = try Parser.init(std.testing.allocator, &args);
     defer parser.deinit();
 
-    try parser.parse(&argv);
-
-    try std.testing.expectError(Error.InvalidValue, parser.parsed.getBoolOption("enabled"));
+    // Validation now happens during parsing
+    try std.testing.expectError(Error.InvalidValue, parser.parse(&argv));
 }
 
 test "get generic bool" {
@@ -1210,3 +1208,86 @@ test "argument terminator -- with mix of options and positionals" {
     try std.testing.expectEqualStrings("10", positionals[2]);
     try std.testing.expectEqualStrings("extra.txt", positionals[3]);
 }
+
+test "parse-time validation for int option" {
+    const args = [_]Arg{
+        .{ .name = "count", .long = "count", .kind = .option, .value_type = .int },
+    };
+
+    const argv = [_][]const u8{ "program", "--count", "not-a-number" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    // Validation happens during parsing
+    try std.testing.expectError(Error.InvalidValue, parser.parse(&argv));
+
+    // Verify error context is set
+    try std.testing.expect(parser.last_error != null);
+    try std.testing.expect(parser.last_error.?.kind == Error.InvalidValue);
+}
+
+test "parse-time validation for float option" {
+    const args = [_]Arg{
+        .{ .name = "ratio", .long = "ratio", .kind = .option, .value_type = .float },
+    };
+
+    const argv = [_][]const u8{ "program", "--ratio", "not-a-float" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    // Validation happens during parsing
+    try std.testing.expectError(Error.InvalidValue, parser.parse(&argv));
+
+    // Verify error context is set
+    try std.testing.expect(parser.last_error != null);
+    try std.testing.expect(parser.last_error.?.kind == Error.InvalidValue);
+}
+
+test "parse-time validation for bool option" {
+    const args = [_]Arg{
+        .{ .name = "enabled", .long = "enabled", .kind = .option, .value_type = .bool },
+    };
+
+    const argv = [_][]const u8{ "program", "--enabled", "maybe" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    // Validation happens during parsing
+    try std.testing.expectError(Error.InvalidValue, parser.parse(&argv));
+
+    // Verify error context is set
+    try std.testing.expect(parser.last_error != null);
+    try std.testing.expect(parser.last_error.?.kind == Error.InvalidValue);
+}
+
+test "parse-time validation stores typed value" {
+    const args = [_]Arg{
+        .{ .name = "count", .long = "count", .kind = .option, .value_type = .int },
+        .{ .name = "ratio", .long = "ratio", .kind = .option, .value_type = .float },
+        .{ .name = "flag", .long = "flag", .kind = .option, .value_type = .bool },
+    };
+
+    const argv = [_][]const u8{ "program", "--count", "42", "--ratio", "3.14", "--flag", "true" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    // Typed values should be stored
+    const count_val = parser.parsed.getTypedOption("count").?;
+    try std.testing.expect(count_val == .int);
+    try std.testing.expectEqual(@as(i64, 42), count_val.int);
+
+    const ratio_val = parser.parsed.getTypedOption("ratio").?;
+    try std.testing.expect(ratio_val == .float);
+    try std.testing.expectApproxEqAbs(@as(f64, 3.14), ratio_val.float, 0.001);
+
+    const flag_val = parser.parsed.getTypedOption("flag").?;
+    try std.testing.expect(flag_val == .bool);
+    try std.testing.expectEqual(true, flag_val.bool);
+}
+
