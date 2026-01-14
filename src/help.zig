@@ -138,7 +138,7 @@ fn displayArgs(writer: anytype, allocator: std.mem.Allocator, args: []const Arg,
     if (flags.items.len > 0) {
         try writeIndentedHeader(writer, color, "Flags:");
         for (flags.items) |arg| {
-            try displayArg(writer, arg.*, config, true);
+            try displayArg(writer, allocator, arg.*, config, true);
         }
     }
 
@@ -146,7 +146,7 @@ fn displayArgs(writer: anytype, allocator: std.mem.Allocator, args: []const Arg,
     if (options.items.len > 0) {
         try writeIndentedHeader(writer, color, "Options:");
         for (options.items) |arg| {
-            try displayArg(writer, arg.*, config, true);
+            try displayArg(writer, allocator, arg.*, config, true);
         }
     }
 
@@ -154,7 +154,7 @@ fn displayArgs(writer: anytype, allocator: std.mem.Allocator, args: []const Arg,
     if (positionals.items.len > 0) {
         try writeIndentedHeader(writer, color, "Positionals:");
         for (positionals.items) |arg| {
-            try displayArg(writer, arg.*, config, false);
+            try displayArg(writer, allocator, arg.*, config, false);
         }
     }
 }
@@ -188,12 +188,12 @@ fn writeIndentedHeader(writer: anytype, color: bool, text: []const u8) !void {
 }
 
 /// Display a single argument.
-fn displayArg(writer: anytype, arg: Arg, config: HelpConfig, has_prefix: bool) !void {
-    var options_buffer: [256]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&options_buffer);
+fn displayArg(writer: anytype, allocator: std.mem.Allocator, arg: Arg, config: HelpConfig, has_prefix: bool) !void {
+    var options_buffer = array_list.AlignedManaged(u8, null).init(allocator);
+    defer options_buffer.deinit();
 
     // Build the option specification
-    const option_writer = fbs.writer();
+    const option_writer = options_buffer.writer();
 
     if (has_prefix) {
         const has_short = (arg.short != null) or (arg.short_aliases.len > 0);
@@ -253,7 +253,7 @@ fn displayArg(writer: anytype, arg: Arg, config: HelpConfig, has_prefix: bool) !
         try option_writer.print("  <{s}>", .{arg.name});
     }
 
-    const options_text = fbs.getWritten();
+    const options_text = options_buffer.items;
 
     // Write the options column
     try writer.writeAll(options_text);
@@ -433,4 +433,30 @@ test "generate help no placeholders" {
 
     try std.testing.expect(std.mem.indexOf(u8, help, "<string>") == null);
     try std.testing.expect(std.mem.indexOf(u8, help, "-f, --file") != null);
+}
+
+test "generate help with many aliases does not overflow" {
+    const args = [_]Arg{
+        .{
+            .name = "verbose",
+            .short = 'v',
+            .long = "verbose",
+            .kind = .flag,
+            .help = "Enable verbose output",
+            .short_aliases = &.{ 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'w', 'x', 'y', 'z' },
+            .aliases = &.{ "very-verbose", "extra-verbose", "super-verbose", "ultra-verbose", "mega-verbose", "hyper-verbose", "giga-verbose" },
+        },
+    };
+
+    const config = HelpConfig{
+        .program_name = "app",
+        .color = .never,
+    };
+
+    const help = try generateHelp(std.testing.allocator, &args, config);
+    defer std.testing.allocator.free(help);
+
+    try std.testing.expect(std.mem.indexOf(u8, help, "-v") != null);
+    try std.testing.expect(std.mem.indexOf(u8, help, "--verbose") != null);
+    try std.testing.expect(std.mem.indexOf(u8, help, "--very-verbose") != null);
 }

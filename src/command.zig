@@ -138,12 +138,12 @@ pub const Command = struct {
 
         if (self.args.len > 0) {
             try writeSectionHeader(buffer.writer(), color, "Arguments:");
-            try displayArgs(buffer.writer(), allocator, self.args, config, color);
+            try displayArgs(buffer.writer(), allocator, self.args, config, color, allocator);
         }
 
         if (self.subcommands.len > 0) {
             try writeSectionHeader(buffer.writer(), color, "Subcommands:");
-            try displaySubcommands(buffer.writer(), self.subcommands, config, color);
+            try displaySubcommands(buffer.writer(), allocator, self.subcommands, config, color);
         }
 
         return buffer.toOwnedSlice();
@@ -220,13 +220,13 @@ fn joinPath(allocator: std.mem.Allocator, prefix: []const u8, name: []const u8) 
     return buffer.toOwnedSlice();
 }
 
-fn displaySubcommands(writer: anytype, subcommands: []const Command, config: HelpConfig, color: bool) !void {
+fn displaySubcommands(writer: anytype, allocator: std.mem.Allocator, subcommands: []const Command, config: HelpConfig, color: bool) !void {
     for (subcommands) |cmd| {
-        var options_buffer: [256]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&options_buffer);
+        var options_buffer = array_list.AlignedManaged(u8, null).init(allocator);
+        defer options_buffer.deinit();
 
-        try fbs.writer().print("  {s}", .{cmd.name});
-        const options_text = fbs.getWritten();
+        try options_buffer.writer().print("  {s}", .{cmd.name});
+        const options_text = options_buffer.items;
 
         try writer.writeAll(options_text);
 
@@ -251,7 +251,7 @@ fn displaySubcommands(writer: anytype, subcommands: []const Command, config: Hel
     }
 }
 
-fn displayArgs(writer: anytype, allocator: std.mem.Allocator, args: []const Arg, config: HelpConfig, color: bool) !void {
+fn displayArgs(writer: anytype, allocator: std.mem.Allocator, args: []const Arg, config: HelpConfig, color: bool, opt_allocator: std.mem.Allocator) !void {
     var flags = array_list.AlignedManaged(*const Arg, null).init(allocator);
     defer flags.deinit();
     var options = array_list.AlignedManaged(*const Arg, null).init(allocator);
@@ -272,21 +272,21 @@ fn displayArgs(writer: anytype, allocator: std.mem.Allocator, args: []const Arg,
     if (flags.items.len > 0) {
         try writeIndentedHeader(writer, color, "Flags:");
         for (flags.items) |arg| {
-            try displayArg(writer, arg.*, config, true);
+            try displayArg(writer, opt_allocator, arg.*, config, true);
         }
     }
 
     if (options.items.len > 0) {
         try writeIndentedHeader(writer, color, "Options:");
         for (options.items) |arg| {
-            try displayArg(writer, arg.*, config, true);
+            try displayArg(writer, opt_allocator, arg.*, config, true);
         }
     }
 
     if (positionals.items.len > 0) {
         try writeIndentedHeader(writer, color, "Positionals:");
         for (positionals.items) |arg| {
-            try displayArg(writer, arg.*, config, false);
+            try displayArg(writer, opt_allocator, arg.*, config, false);
         }
     }
 }
@@ -319,11 +319,11 @@ fn writeIndentedHeader(writer: anytype, color: bool, text: []const u8) !void {
     try writeSectionHeader(writer, color, text);
 }
 
-fn displayArg(writer: anytype, arg: Arg, config: HelpConfig, has_prefix: bool) !void {
-    var options_buffer: [256]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&options_buffer);
+fn displayArg(writer: anytype, allocator: std.mem.Allocator, arg: Arg, config: HelpConfig, has_prefix: bool) !void {
+    var options_buffer = array_list.AlignedManaged(u8, null).init(allocator);
+    defer options_buffer.deinit();
 
-    const option_writer = fbs.writer();
+    const option_writer = options_buffer.writer();
 
     if (has_prefix) {
         const has_short = (arg.short != null) or (arg.short_aliases.len > 0);
@@ -381,7 +381,7 @@ fn displayArg(writer: anytype, arg: Arg, config: HelpConfig, has_prefix: bool) !
         try option_writer.print("  <{s}>", .{arg.name});
     }
 
-    const options_text = fbs.getWritten();
+    const options_text = options_buffer.items;
 
     try writer.writeAll(options_text);
 
