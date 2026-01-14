@@ -1291,3 +1291,263 @@ test "parse-time validation stores typed value" {
     try std.testing.expectEqual(true, flag_val.bool);
 }
 
+// Duplicate Argument Detection Tests
+
+test "detects long name conflicting with other alias at runtime" {
+    const args = [_]Arg{
+        .{ .name = "verbose", .long = "verbose", .kind = .flag },
+        .{ .name = "loud", .aliases = &.{"verbose"}, .kind = .flag },
+    };
+
+    const result = Parser.init(std.testing.allocator, &args);
+    try std.testing.expectError(Error.DuplicateArgument, result);
+}
+
+test "detects alias conflicting with other long name at runtime" {
+    const args = [_]Arg{
+        .{ .name = "verbose", .aliases = &.{"loud"}, .kind = .flag },
+        .{ .name = "loud", .long = "loud", .kind = .flag },
+    };
+
+    const result = Parser.init(std.testing.allocator, &args);
+    try std.testing.expectError(Error.DuplicateArgument, result);
+}
+
+test "detects duplicate long names at runtime" {
+    const args = [_]Arg{
+        .{ .name = "verbose", .long = "verbose", .kind = .flag },
+        .{ .name = "loud", .long = "verbose", .kind = .flag },
+    };
+
+    const result = Parser.init(std.testing.allocator, &args);
+    try std.testing.expectError(Error.DuplicateArgument, result);
+}
+
+test "detects duplicate aliases at runtime" {
+    const args = [_]Arg{
+        .{ .name = "verbose", .aliases = &.{"loud"}, .kind = .flag },
+        .{ .name = "loud", .aliases = &.{"loud"}, .kind = .flag },
+    };
+
+    const result = Parser.init(std.testing.allocator, &args);
+    try std.testing.expectError(Error.DuplicateArgument, result);
+}
+
+test "detects duplicate short names at runtime" {
+    const args = [_]Arg{
+        .{ .name = "verbose", .short = 'v', .kind = .flag },
+        .{ .name = "loud", .short = 'v', .kind = .flag },
+    };
+
+    const result = Parser.init(std.testing.allocator, &args);
+    try std.testing.expectError(Error.DuplicateArgument, result);
+}
+
+test "detects short alias conflicting with primary short at runtime" {
+    const args = [_]Arg{
+        .{ .name = "verbose", .short = 'v', .kind = .flag },
+        .{ .name = "loud", .short_aliases = &.{'v'}, .kind = .flag },
+    };
+
+    const result = Parser.init(std.testing.allocator, &args);
+    try std.testing.expectError(Error.DuplicateArgument, result);
+}
+
+test "detects duplicate short aliases at runtime" {
+    const args = [_]Arg{
+        .{ .name = "verbose", .short_aliases = &.{ 'v', 'V' }, .kind = .flag },
+        .{ .name = "loud", .short_aliases = &.{'V'}, .kind = .flag },
+    };
+
+    const result = Parser.init(std.testing.allocator, &args);
+    try std.testing.expectError(Error.DuplicateArgument, result);
+}
+
+test "allows non-conflicting arguments" {
+    const args = [_]Arg{
+        .{ .name = "verbose", .short = 'v', .long = "verbose", .aliases = &.{"verb"}, .kind = .flag },
+        .{ .name = "quiet", .short = 'q', .long = "quiet", .aliases = &.{"silent"}, .kind = .flag },
+    };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    const argv = [_][]const u8{ "program", "-v", "--quiet" };
+    try parser.parse(&argv);
+    try std.testing.expect(parser.getFlag("verbose"));
+    try std.testing.expect(parser.getFlag("quiet"));
+}
+
+// Negative Number Positional Tests
+
+test "negative integer positional" {
+    const args = [_]Arg{
+        .{ .name = "count", .kind = .positional, .position = 0, .value_type = .int },
+    };
+
+    const argv = [_][]const u8{ "program", "-123" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const count = try parser.getIntPositional("count");
+    try std.testing.expectEqual(@as(i64, -123), count);
+}
+
+test "negative float positional" {
+    const args = [_]Arg{
+        .{ .name = "ratio", .kind = .positional, .position = 0, .value_type = .float },
+    };
+
+    const argv = [_][]const u8{ "program", "-3.14159" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const ratio = try parser.getFloatPositional("ratio");
+    try std.testing.expectApproxEqAbs(@as(f64, -3.14159), ratio, 0.00001);
+}
+
+test "short flag still works with negative number positional" {
+    const args = [_]Arg{
+        .{ .name = "verbose", .short = 'v', .kind = .flag },
+        .{ .name = "count", .kind = .positional, .position = 0, .value_type = .int },
+    };
+
+    const argv = [_][]const u8{ "program", "-v", "-42" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    try std.testing.expect(parser.getFlag("verbose"));
+    const count = try parser.getIntPositional("count");
+    try std.testing.expectEqual(@as(i64, -42), count);
+}
+
+test "negative zero positional" {
+    const args = [_]Arg{
+        .{ .name = "count", .kind = .positional, .position = 0, .value_type = .int },
+    };
+
+    const argv = [_][]const u8{ "program", "-0" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const count = try parser.getIntPositional("count");
+    try std.testing.expectEqual(@as(i64, 0), count);
+}
+
+test "multiple negative number positionals" {
+    const args = [_]Arg{
+        .{ .name = "min", .kind = .positional, .position = 0, .value_type = .int },
+        .{ .name = "max", .kind = .positional, .position = 1, .value_type = .int },
+    };
+
+    const argv = [_][]const u8{ "program", "-100", "-50" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const min = try parser.getIntPositional("min");
+    const max = try parser.getIntPositional("max");
+    try std.testing.expectEqual(@as(i64, -100), min);
+    try std.testing.expectEqual(@as(i64, -50), max);
+}
+
+test "mixed positive and negative number positionals" {
+    const args = [_]Arg{
+        .{ .name = "a", .kind = .positional, .position = 0, .value_type = .int },
+        .{ .name = "b", .kind = .positional, .position = 1, .value_type = .int },
+    };
+
+    const argv = [_][]const u8{ "program", "-10", "20", "-30" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const a = try parser.getIntPositional("a");
+    const b = try parser.getIntPositional("b");
+
+    const positionals = parser.getPositionals();
+    try std.testing.expectEqual(@as(usize, 3), positionals.len);
+    try std.testing.expectEqual(@as(i64, -10), a);
+    try std.testing.expectEqual(@as(i64, 20), b);
+    try std.testing.expectEqualStrings("-30", positionals[2]);
+}
+
+test "dash alone is not a negative number" {
+    const args = [_]Arg{
+        .{ .name = "verbose", .short = 'v', .kind = .flag },
+    };
+
+    const argv = [_][]const u8{ "program", "-" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    // Single '-' is treated as positional (not a valid negative number)
+    try parser.parse(&argv);
+
+    const positionals = parser.getPositionals();
+    try std.testing.expectEqual(@as(usize, 1), positionals.len);
+    try std.testing.expectEqualStrings("-", positionals[0]);
+}
+
+test "dash followed by non-digit is not a negative number" {
+    const args = [_]Arg{
+        .{ .name = "verbose", .short = 'v', .kind = .flag },
+    };
+
+    const argv = [_][]const u8{ "program", "-abc" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    // This should error since 'a' is not a defined short flag
+    try std.testing.expectError(Error.UnknownArgument, parser.parse(&argv));
+}
+
+test "negative number as option value" {
+    const args = [_]Arg{
+        .{ .name = "offset", .long = "offset", .kind = .option, .value_type = .int },
+    };
+
+    const argv = [_][]const u8{ "program", "--offset", "-42" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const offset = try parser.getInt("offset");
+    try std.testing.expectEqual(@as(i64, -42), offset);
+}
+
+test "negative float number as option value" {
+    const args = [_]Arg{
+        .{ .name = "temperature", .long = "temp", .kind = .option, .value_type = .float },
+    };
+
+    const argv = [_][]const u8{ "program", "--temp", "-273.15" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    const temp = try parser.getFloat("temperature");
+    try std.testing.expectApproxEqAbs(@as(f64, -273.15), temp, 0.001);
+}

@@ -52,7 +52,10 @@ pub const Parser = struct {
 
     pub fn initWithConfig(allocator: std.mem.Allocator, args: []const Arg, config: HelpConfig) !Parser {
         var short_map = std.AutoHashMap(u8, usize).init(allocator);
+        errdefer short_map.deinit();
+
         var long_map = std.StringHashMap(usize).init(allocator);
+        errdefer long_map.deinit();
 
         for (args, 0..) |arg, i| {
             if (arg.short) |s| {
@@ -105,6 +108,26 @@ pub const Parser = struct {
         }
     }
 
+    /// Check if a string starting with '-' is a negative number.
+    fn isNegativeNumber(s: []const u8) bool {
+        if (s.len < 2) return false;
+        // Must start with '-'
+        if (s[0] != '-') return false;
+        // Next char must be a digit
+        if (!std.ascii.isDigit(s[1])) return false;
+        // Check rest of string is valid number format (digits, optional decimal point)
+        var has_decimal = false;
+        for (s[1..]) |c| {
+            if (c == '.') {
+                if (has_decimal) return false; // Multiple decimals
+                has_decimal = true;
+            } else if (!std.ascii.isDigit(c)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /// Parse command-line arguments.
     pub fn parse(self: *Parser, argv: []const []const u8) !void {
         self.last_error = null;
@@ -139,10 +162,11 @@ pub const Parser = struct {
                 try self.parseLong(arg_str, &i, argv);
             }
             // Check for short option: -f or -fvalue
-            else if (std.mem.startsWith(u8, arg_str, "-") and arg_str.len > 1) {
+            // But first check if it's a negative number (positional)
+            else if (std.mem.startsWith(u8, arg_str, "-") and arg_str.len > 1 and !isNegativeNumber(arg_str)) {
                 try self.parseShort(arg_str, &i, argv);
             }
-            // Otherwise, it's a positional
+            // Otherwise, it's a positional (including negative numbers like -123)
             else {
                 try self.parsed.positionals.append(self.allocator, arg_str);
             }
