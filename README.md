@@ -13,7 +13,7 @@ Type-safe command-line argument parsing for Zig, zero allocation by default.
 ## Install
 
 ```sh
-zig fetch --save https://github.com/garymjr/argparse/archive/refs/heads/main.tar.gz
+zig fetch --save https://github.com/garymjr/argparse/archive/refs/tags/v0.1.0.tar.gz
 ```
 
 ```zig
