@@ -62,9 +62,17 @@ pub fn main() !void {
             const help = try parser.help();
             defer gpa.free(help);
             std.debug.print("{s}", .{help});
-            return;
+            std.process.exit(0);
         }
-        return err;
+        // Show formatted error message for parsing errors
+        if (parser.last_error) |ctx| {
+            const error_msg = try parser.formatError(gpa, ctx.kind, .{});
+            defer gpa.free(error_msg);
+            std.debug.print("{s}\n", .{error_msg});
+        } else {
+            std.debug.print("error: {s}\n", .{@errorName(err)});
+        }
+        std.process.exit(1);
     };
 
     if (parser.getFlag("verbose")) {
