@@ -2,6 +2,8 @@
 
 const std = @import("std");
 const Error = @import("error.zig").Error;
+const Value = @import("arg.zig").Value;
+const ValueType = @import("arg.zig").ValueType;
 
 /// Container for parsed argument values.
 pub const ParsedValues = struct {
@@ -11,6 +13,8 @@ pub const ParsedValues = struct {
     options: std.StringHashMap([]const u8),
     multi_options: std.StringHashMap(std.ArrayList([]const u8)),
     positionals: std.ArrayList([]const u8),
+    // Typed storage for validated values (validated at parse time)
+    typed_options: std.StringHashMap(Value),
 
     pub fn init(allocator: std.mem.Allocator) ParsedValues {
         return .{
@@ -20,6 +24,7 @@ pub const ParsedValues = struct {
             .options = std.StringHashMap([]const u8).init(allocator),
             .multi_options = std.StringHashMap(std.ArrayList([]const u8)).init(allocator),
             .positionals = std.ArrayList([]const u8){},
+            .typed_options = std.StringHashMap(Value).init(allocator),
         };
     }
 
@@ -33,6 +38,7 @@ pub const ParsedValues = struct {
         self.multi_options.deinit();
         self.options.deinit();
         self.positionals.deinit(self.allocator);
+        self.typed_options.deinit();
     }
 
     pub fn reset(self: *ParsedValues) void {
@@ -45,6 +51,7 @@ pub const ParsedValues = struct {
         self.multi_options.clearRetainingCapacity();
         self.options.clearRetainingCapacity();
         self.positionals.clearRetainingCapacity();
+        self.typed_options.clearRetainingCapacity();
     }
 
     /// Check if a flag was set.
@@ -151,5 +158,40 @@ pub const ParsedValues = struct {
             return false;
         }
         return Error.InvalidValue;
+    }
+
+    /// Convert and validate a string value to a typed Value based on value_type.
+    /// Called during parsing to validate values immediately.
+    pub fn convertValue(str: []const u8, value_type: ValueType) !Value {
+        return switch (value_type) {
+            .string => Value{ .string = str },
+            .int => {
+                const val = std.fmt.parseInt(i64, str, 10) catch return Error.InvalidValue;
+                return Value{ .int = val };
+            },
+            .float => {
+                const val = std.fmt.parseFloat(f64, str) catch return Error.InvalidValue;
+                return Value{ .float = val };
+            },
+            .bool => {
+                if (std.mem.eql(u8, str, "true") or std.mem.eql(u8, str, "1") or std.mem.eql(u8, str, "yes") or std.mem.eql(u8, str, "on")) {
+                    return Value{ .bool = true };
+                }
+                if (std.mem.eql(u8, str, "false") or std.mem.eql(u8, str, "0") or std.mem.eql(u8, str, "no") or std.mem.eql(u8, str, "off")) {
+                    return Value{ .bool = false };
+                }
+                return Error.InvalidValue;
+            },
+        };
+    }
+
+    /// Store a typed value for an option (validated at parse time).
+    pub fn setTypedOption(self: *ParsedValues, name: []const u8, value: Value) !void {
+        try self.typed_options.put(name, value);
+    }
+
+    /// Get a typed value for an option.
+    pub fn getTypedOption(self: *const ParsedValues, name: []const u8) ?Value {
+        return self.typed_options.get(name);
     }
 };
