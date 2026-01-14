@@ -190,6 +190,14 @@ pub const Parser = struct {
     }
 
     fn recordOption(self: *Parser, arg: *const Arg, value: []const u8) !void {
+        // Validate and convert value based on value_type
+        const typed_value = ParsedValues.convertValue(value, arg.value_type) catch |err| {
+            if (err == Error.InvalidValue) return self.fail(Error.InvalidValue, null, arg, value);
+            return err;
+        };
+        try self.parsed.setTypedOption(arg.name, typed_value);
+
+        // Run custom validator if provided
         if (arg.validator) |validator| {
             validator(value) catch |err| {
                 if (err == Error.InvalidValue) return self.fail(Error.InvalidValue, null, arg, value);
