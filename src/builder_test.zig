@@ -4,7 +4,6 @@ const ArgOptions = @import("builder.zig").ArgOptions;
 const ValueType = @import("arg.zig").ValueType;
 const Error = @import("error.zig").Error;
 
-
 test "builder builds parser" {
     var builder = Builder.init(std.testing.allocator);
     defer builder.deinit();
@@ -50,6 +49,6 @@ test "builder surfaces missing required" {
     var parser = try builder.build();
     defer parser.deinit();
 
-    const argv = [_][]const u8{ "program" };
+    const argv = [_][]const u8{"program"};
     try std.testing.expectError(Error.MissingRequired, parser.parse(&argv));
 }

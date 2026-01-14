@@ -201,7 +201,7 @@ test "error missing required option" {
         .{ .name = "file", .long = "file", .kind = .option, .required = true },
     };
 
-    const argv = [_][]const u8{ "program" };
+    const argv = [_][]const u8{"program"};
 
     var parser = try Parser.init(std.testing.allocator, &args);
     defer parser.deinit();
@@ -214,7 +214,7 @@ test "no arguments" {
         .{ .name = "verbose", .short = 'v', .kind = .flag },
     };
 
-    const argv = [_][]const u8{ "program" };
+    const argv = [_][]const u8{"program"};
 
     var parser = try Parser.init(std.testing.allocator, &args);
     defer parser.deinit();
@@ -439,7 +439,7 @@ test "default int value" {
         .{ .name = "count", .long = "count", .kind = .option, .value_type = .int, .default = .{ .int = 10 } },
     };
 
-    const argv = [_][]const u8{ "program" };
+    const argv = [_][]const u8{"program"};
 
     var parser = try Parser.init(std.testing.allocator, &args);
     defer parser.deinit();
@@ -455,7 +455,7 @@ test "default string value" {
         .{ .name = "output", .long = "output", .kind = .option, .value_type = .string, .default = .{ .string = "out.txt" } },
     };
 
-    const argv = [_][]const u8{ "program" };
+    const argv = [_][]const u8{"program"};
 
     var parser = try Parser.init(std.testing.allocator, &args);
     defer parser.deinit();
@@ -472,7 +472,7 @@ test "default float value" {
         .{ .name = "threshold", .long = "threshold", .kind = .option, .value_type = .float, .default = .{ .float = 0.5 } },
     };
 
-    const argv = [_][]const u8{ "program" };
+    const argv = [_][]const u8{"program"};
 
     var parser = try Parser.init(std.testing.allocator, &args);
     defer parser.deinit();
@@ -504,7 +504,7 @@ test "generic get with default" {
         .{ .name = "port", .long = "port", .kind = .option, .value_type = .int, .default = .{ .int = 3000 } },
     };
 
-    const argv = [_][]const u8{ "program" };
+    const argv = [_][]const u8{"program"};
 
     var parser = try Parser.init(std.testing.allocator, &args);
     defer parser.deinit();
@@ -536,7 +536,7 @@ test "required with no value and no default" {
         .{ .name = "count", .long = "count", .kind = .option, .value_type = .int, .required = true },
     };
 
-    const argv = [_][]const u8{ "program" };
+    const argv = [_][]const u8{"program"};
 
     var parser = try Parser.init(std.testing.allocator, &args);
     defer parser.deinit();
@@ -549,7 +549,7 @@ test "required satisfied by default" {
         .{ .name = "count", .long = "count", .kind = .option, .value_type = .int, .required = true, .default = .{ .int = 5 } },
     };
 
-    const argv = [_][]const u8{ "program" };
+    const argv = [_][]const u8{"program"};
 
     var parser = try Parser.init(std.testing.allocator, &args);
     defer parser.deinit();
@@ -565,7 +565,7 @@ test "parsed values get int option default" {
         .{ .name = "count", .long = "count", .kind = .option, .value_type = .int },
     };
 
-    const argv = [_][]const u8{ "program" };
+    const argv = [_][]const u8{"program"};
 
     var parser = try Parser.init(std.testing.allocator, &args);
     defer parser.deinit();
@@ -581,7 +581,7 @@ test "parsed values get float option default" {
         .{ .name = "ratio", .long = "ratio", .kind = .option, .value_type = .float },
     };
 
-    const argv = [_][]const u8{ "program" };
+    const argv = [_][]const u8{"program"};
 
     var parser = try Parser.init(std.testing.allocator, &args);
     defer parser.deinit();
@@ -597,7 +597,7 @@ test "parsed values get bool option default" {
         .{ .name = "enabled", .long = "enabled", .kind = .option, .value_type = .bool },
     };
 
-    const argv = [_][]const u8{ "program" };
+    const argv = [_][]const u8{"program"};
 
     var parser = try Parser.init(std.testing.allocator, &args);
     defer parser.deinit();
@@ -687,7 +687,7 @@ test "required positional missing" {
         .{ .name = "input", .kind = .positional, .position = 0, .required = true },
     };
 
-    const argv = [_][]const u8{ "program" };
+    const argv = [_][]const u8{"program"};
 
     var parser = try Parser.init(std.testing.allocator, &args);
     defer parser.deinit();
@@ -1037,7 +1037,7 @@ test "positional validator rejects value" {
 
 test "parse long alias" {
     const args = [_]Arg{
-        .{ .name = "output", .long = "output", .aliases = &.{ "out" }, .kind = .option },
+        .{ .name = "output", .long = "output", .aliases = &.{"out"}, .kind = .option },
     };
 
     const argv = [_][]const u8{ "program", "--out", "file.txt" };
@@ -1052,7 +1052,7 @@ test "parse long alias" {
 
 test "parse short alias" {
     const args = [_]Arg{
-        .{ .name = "output", .short = 'o', .short_aliases = &.{ 'O' }, .kind = .option },
+        .{ .name = "output", .short = 'o', .short_aliases = &.{'O'}, .kind = .option },
     };
 
     const argv = [_][]const u8{ "program", "-O", "file.txt" };
@@ -1130,7 +1130,7 @@ test "parse resets previous values" {
     };
 
     const argv_first = [_][]const u8{ "program", "-v" };
-    const argv_second = [_][]const u8{ "program" };
+    const argv_second = [_][]const u8{"program"};
 
     var parser = try Parser.init(std.testing.allocator, &args);
     defer parser.deinit();

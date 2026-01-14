@@ -88,7 +88,7 @@ test "subcommand help includes subcommands" {
         .subcommands = &.{clone},
     };
 
-    const argv = [_][]const u8{ "git" };
+    const argv = [_][]const u8{"git"};
 
     const help = try root.helpFor(std.testing.allocator, &argv);
     defer std.testing.allocator.free(help);
