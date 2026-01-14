@@ -118,8 +118,21 @@ pub const Parser = struct {
 
         // Skip program name (argv[0])
         var i: usize = 1;
+        var stop_parsing: bool = false;
         while (i < argv.len) : (i += 1) {
             const arg_str = argv[i];
+
+            // Check for argument terminator --
+            if (std.mem.eql(u8, arg_str, "--")) {
+                stop_parsing = true;
+                continue;
+            }
+
+            // After --, treat everything as positional
+            if (stop_parsing) {
+                try self.parsed.positionals.append(self.allocator, arg_str);
+                continue;
+            }
 
             // Check for long option: --name or --name=value
             if (std.mem.startsWith(u8, arg_str, "--")) {

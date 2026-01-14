@@ -1141,3 +1141,72 @@ test "parse resets previous values" {
     try parser.parse(&argv_second);
     try std.testing.expect(!parser.getFlag("verbose"));
 }
+
+test "argument terminator -- treats subsequent args as positionals" {
+    const args = [_]Arg{
+        .{ .name = "verbose", .short = 'v', .kind = .flag },
+        .{ .name = "output", .short = 'o', .long = "output", .kind = .option },
+    };
+
+    const argv = [_][]const u8{ "program", "-v", "--", "--output", "file.txt", "-o", "other.txt" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    try std.testing.expect(parser.getFlag("verbose"));
+
+    const positionals = parser.getPositionals();
+    try std.testing.expectEqual(@as(usize, 4), positionals.len);
+    try std.testing.expectEqualStrings("--output", positionals[0]);
+    try std.testing.expectEqualStrings("file.txt", positionals[1]);
+    try std.testing.expectEqualStrings("-o", positionals[2]);
+    try std.testing.expectEqualStrings("other.txt", positionals[3]);
+
+    try std.testing.expect(parser.getOption("output") == null);
+}
+
+test "argument terminator -- with no following args" {
+    const args = [_]Arg{
+        .{ .name = "verbose", .short = 'v', .kind = .flag },
+    };
+
+    const argv = [_][]const u8{ "program", "-v", "--" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    try std.testing.expect(parser.getFlag("verbose"));
+
+    const positionals = parser.getPositionals();
+    try std.testing.expectEqual(@as(usize, 0), positionals.len);
+}
+
+test "argument terminator -- with mix of options and positionals" {
+    const args = [_]Arg{
+        .{ .name = "verbose", .short = 'v', .kind = .flag },
+        .{ .name = "count", .long = "count", .kind = .option },
+        .{ .name = "input", .kind = .positional, .position = 0 },
+    };
+
+    const argv = [_][]const u8{ "program", "-v", "--count", "5", "--", "--verbose", "--count", "10", "extra.txt" };
+
+    var parser = try Parser.init(std.testing.allocator, &args);
+    defer parser.deinit();
+
+    try parser.parse(&argv);
+
+    try std.testing.expect(parser.getFlag("verbose"));
+    try std.testing.expectEqualStrings("5", parser.getOption("count").?);
+    try std.testing.expectEqualStrings("--verbose", parser.getPositional("input").?);
+
+    const positionals = parser.getPositionals();
+    try std.testing.expectEqual(@as(usize, 4), positionals.len);
+    try std.testing.expectEqualStrings("--verbose", positionals[0]);
+    try std.testing.expectEqualStrings("--count", positionals[1]);
+    try std.testing.expectEqualStrings("10", positionals[2]);
+    try std.testing.expectEqualStrings("extra.txt", positionals[3]);
+}
