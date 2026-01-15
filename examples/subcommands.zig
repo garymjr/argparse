@@ -88,15 +88,18 @@ pub fn main() !void {
             defer gpa.free(help);
             std.debug.print("{s}", .{help});
         },
-        argparse.Error.UnknownCommand => {
+        else => {
+            // Show error message for all parsing errors
             const message = try app.formatError(gpa, err, argv.items, .{});
             defer gpa.free(message);
             std.debug.print("{s}\n", .{message});
 
+            // Show help after error to guide the user
             const help = try app.helpFor(gpa, argv.items);
             defer gpa.free(help);
-            std.debug.print("{s}", .{help});
+            std.debug.print("\n{s}", .{help});
+
+            std.process.exit(1);
         },
-        else => return err,
     };
 }

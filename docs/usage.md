@@ -27,6 +27,32 @@ defer allocator.free(message);
 std.debug.print("{s}\n", .{message});
 ```
 
+## Showing help on error
+
+When a parsing error occurs, it's good practice to display the help text to guide the user:
+
+```zig
+parser.parse(argv) catch |err| {
+    if (err == argparse.Error.ShowHelp) {
+        const help = try parser.help();
+        defer allocator.free(help);
+        std.debug.print("{s}", .{help});
+        std.process.exit(0);
+    }
+
+    // Show error message
+    const message = try parser.formatError(allocator, err, .{});
+    defer allocator.free(message);
+    std.debug.print("{s}\n", .{message});
+
+    // Show help after error
+    const help = try parser.help();
+    defer allocator.free(help);
+    std.debug.print("\n{s}", .{help});
+    std.process.exit(1);
+};
+```
+
 ## Comptime validation
 
 ```zig

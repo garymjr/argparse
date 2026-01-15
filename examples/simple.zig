@@ -58,6 +58,10 @@ pub fn main() !void {
         const message = try parser.formatError(gpa, err, .{});
         defer gpa.free(message);
         std.debug.print("{s}\n", .{message});
+
+        const help = try parser.help();
+        defer gpa.free(help);
+        std.debug.print("\n{s}", .{help});
         return err;
     };
 

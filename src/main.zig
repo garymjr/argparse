@@ -72,6 +72,10 @@ pub fn main() !void {
         } else {
             std.debug.print("error: {s}\n", .{@errorName(err)});
         }
+        // Show help after error to guide the user
+        const help = try parser.help();
+        defer gpa.free(help);
+        std.debug.print("\n{s}", .{help});
         std.process.exit(1);
     };
 
